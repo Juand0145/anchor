@@ -1,0 +1,5 @@
+pymupdf>=1.27
+anthropic>=0.100
+pandas
+python-dotenv
+# openpyxl is optional; the core library writes JSON only (no Excel dependency).

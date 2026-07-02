@@ -1,0 +1,60 @@
+You identify HIPAA Administrative Simplification requirements inside the chunk
+(45 CFR Parts 160, 162, 164 — Privacy, Security, Breach Notification, and
+General/Administrative provisions) so their boundaries can be anchored.
+
+These rules decide ONLY which spans are requirements and how requirement_id is
+formatted. The output shape (anchors and status) is defined by the anchor
+instructions above.
+
+REQUIREMENT IDENTIFIER (requirement_id):
+- CFR-style hierarchical id WITHOUT the leading "§", e.g. "164.308(a)(1)(ii)(A)",
+  "164.306(a)(1)", "164.310(b)", "160.102". Concatenate the section number with
+  the parenthetical hierarchy where the obligation appears.
+- Heading anchoring: emit a requirement for section "NNN.NNN" only if the literal
+  heading "§ NNN.NNN" (allow spacing artifacts like "§NNN.NNN") appears in THIS
+  chunk. If the governing heading is in a previous chunk, do not emit it here.
+- No subparagraph promotion: (a) (b) (1) (2) (i) (ii) always belong to the nearest
+  preceding "§ NNN.NNN" heading; never promote a subparagraph to a sibling
+  section number.
+- No section interpolation: HIPAA sections are not consecutive; never invent a
+  section to fill a numeric gap.
+- Use the letters and roman numerals exactly as printed; never re-letter,
+  re-number, or normalize.
+
+WHAT IS A REQUIREMENT (emit these):
+- Each "Standard: <name>." paragraph that states an obligation.
+- Each implementation specification marked "(Required)" or "(Addressable)". When a
+  Standard is followed by lettered specs (A) (B) (C)..., the Standard AND each spec
+  are separate requirements.
+- Numbered/lettered paragraphs containing an obligation verb (must, shall,
+  implement, establish, ensure, conduct, identify, apply, document, maintain,
+  perform, review, report).
+- Substantive Privacy Rule (Part 164 Subpart E) and Breach Notification Rule
+  (Part 164 Subpart D) obligations, and organizational requirements (§ 164.105,
+  § 164.314, § 164.504, § 164.530).
+- Compliance/investigation obligations on covered entities or business associates
+  in Part 160 Subpart C (e.g. § 160.310, § 160.316).
+
+GRANULARITY AND BOUNDARIES:
+- Applicability/scope/enumeration sections that merely LIST regulated entities,
+  persons, or transactions are ONE requirement for the WHOLE section (id = the
+  section number, e.g. "160.102"). The start_anchor is the "§ NNN.NNN <title>"
+  heading line; the end_anchor is the LAST text of the section — normally the
+  trailing regulatory-history bracket "[NN FR ..., ... 20NN]", otherwise the final
+  clause immediately before the next "§ NNN.NNN" heading.
+  Capture the ENTIRE section: ALL lettered/numbered paragraphs (a) (b) (c) ... and
+  their nested items, not just the first list. Do NOT stop at the last item of the
+  first "(a)" enumeration, and do NOT split "(a) (1) (2) (3) (b) (c)" into separate
+  requirements — a bare item like "A health plan." is meaningless on its own.
+  Example: for "§ 160.102 Applicability." the single requirement "160.102" runs
+  start_anchor "§ 160.102 Applicability." -> end_anchor "78 FR 5687, Jan. 25,
+  2013]" (the section's trailing history bracket), spanning (a) (1) (2) (3) (b) (c),
+  NOT ending at "(3) ... transaction covered by this subchapter.".
+- Contrast: a Standard with implementation specifications is the opposite case —
+  the Standard AND each "(Required)" / "(Addressable)" spec are SEPARATE
+  requirements. When a Standard or spec has its own visible terminal sentence,
+  clause, or paragraph before the next identifier, emit an end_anchor for that
+  terminal text. Use null end_anchor only when the next "(Required)",
+  "(Addressable)", numbered/lettered identifier, or "§ NNN.NNN" heading starts
+  immediately after the current requirement's final punctuation with no
+  intervening non-requirement prose.

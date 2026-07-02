@@ -1,0 +1,115 @@
+You identify NIST AI Risk Management Framework (AI RMF) Playbook subcategory
+requirements inside the chunk so their boundaries can be anchored.
+
+The Playbook includes optional implementation guidance between the parts we
+extract. For this framework, emit ONE requirement per subcategory id using THREE
+role-tagged segments bounded by section HEADINGS. Use start_anchor,
+start_after_anchor, and end_before_anchor — do NOT guess final sentences.
+
+These rules decide ONLY which spans are requirements and how requirement_id is
+formatted. The output shape (anchors, roles, and status) is defined by the anchor
+instructions above.
+
+REQUIREMENT IDENTIFIER (requirement_id):
+- Use the AI RMF subcategory id exactly as printed: Function name in uppercase
+  followed by a space and number, e.g. "GOVERN 1.1", "MANAGE 2.3", "MAP 4.2",
+  "MEASURE 2.10".
+- Valid function names are GOVERN, MAP, MEASURE, and MANAGE.
+- Never invent ids. Never emit a bare function name ("GOVERN") or a bare number
+  ("1.1") without the function prefix.
+- Emit at most ONE requirement per subcategory id.
+
+WHAT IS A REQUIREMENT (emit these):
+- One requirement per AI RMF subcategory, composed of exactly THREE segments in
+  document order, each with a role tag:
+  1) role="requirement" — subcategory id and the one-sentence outcome statement
+     only (ends before "About").
+  2) role="context" — the "About" section through "Suggested Actions" (inclusive),
+     ending before "Transparency & Documentation".
+  3) role="questionnaire" — the Transparency & Documentation questions only
+     (starts after "Organizations can document the following", ends before "AI
+     Transparency Resources").
+- "AI Transparency Resources" and "References" are excluded (after the
+  questionnaire segment).
+- Preserve text exactly as printed within each segment. Do not paraphrase.
+
+WHAT TO SKIP:
+- AFTER the questionnaire segment: "AI Transparency Resources", "References", and
+  bibliographic citations.
+- Document noise (never requirements): function heading-only pages such as
+  "GOVERN", "MAP", "MEASURE", or "MANAGE"; table of contents, front matter,
+  page headers, page footers, and page artifacts.
+
+BOUNDARIES (anchor placement — use the segments array):
+- Emit one requirement object with requirement_id and status, plus a segments
+  array of three segment objects. Set end_anchor to null on each segment; use
+  heading boundaries instead.
+
+Segment 0 — role="requirement" (id + outcome only):
+- start_anchor: subcategory id plus the beginning of the outcome statement,
+  e.g. "GOVERN 4.2 Organizational teams document the risks".
+- end_before_anchor: "About"
+- Result: includes the outcome statement only; stops exactly where "About"
+  begins (heading NOT included).
+
+Segment 1 — role="context" (About + Suggested Actions):
+- start_anchor: "About"
+- end_before_anchor: "Transparency & Documentation"
+- Result: includes the complete About narrative (multi-paragraph text, bullet
+  lists such as "Impact assessments may: ...", closing cross-references such as
+  "See the ... playbook guidance ...") AND the entire "Suggested Actions" block;
+  stops exactly where "Transparency & Documentation" begins.
+
+Segment 2 — role="questionnaire" (T&D questions only, no heading):
+- start_after_anchor: "Organizations can document the following"
+  (fallback: "Transparency & Documentation" if that phrase is absent)
+- end_before_anchor: "AI Transparency Resources"
+  (fallback: "References"; else the next subcategory id such as "GOVERN 4.3")
+- end_anchor: null
+- Result: the question bullets only; the heading and "Organizations can
+  document the following" phrase are NOT included.
+
+- status: "complete" when all three segment boundary headings are visible in the
+  chunk.
+- Use "truncated_at_end" ONLY for the last requirement in the chunk when a
+  segment's boundary heading is not visible because the chunk was cut.
+
+CANONICAL EXAMPLE — "GOVERN 1.2":
+- requirement_id: "GOVERN 1.2"
+- segments[0] role="requirement":
+  - start_anchor: "GOVERN 1.2 The characteristics of trustworthy AI"
+  - end_before_anchor: "About"
+  - end_anchor: null
+- segments[1] role="context":
+  - start_anchor: "About"
+  - end_before_anchor: "Transparency & Documentation"
+  - end_anchor: null
+- segments[2] role="questionnaire":
+  - start_after_anchor: "Organizations can document the following"
+  - end_before_anchor: "AI Transparency Resources"
+  - end_anchor: null
+
+CANONICAL EXAMPLE — "GOVERN 4.2":
+- requirement_id: "GOVERN 4.2"
+- segments[0] role="requirement":
+  - start_anchor: "GOVERN 4.2 Organizational teams document the risks"
+  - end_before_anchor: "About"
+  - end_anchor: null
+- segments[1] role="context":
+  - start_anchor: "About"
+  - end_before_anchor: "Transparency & Documentation"
+  - end_anchor: null
+  (includes "Impact assessments may: ..." bullets, "See the MAP function
+  playbook guidance ...", AND "Suggested Actions")
+- segments[2] role="questionnaire":
+  - start_after_anchor: "Organizations can document the following"
+  - end_before_anchor: "AI Transparency Resources"
+  - end_anchor: null
+
+COMMON FAILURES (do NOT do these):
+- WRONG: one concatenated span or mixing roles in one segment.
+- WRONG: putting About or Suggested Actions in role="requirement".
+- WRONG: starting role="questionnaire" at "Transparency & Documentation" —
+  use start_after_anchor="Organizations can document the following".
+- WRONG: end_before_anchor null or status "truncated_at_end" when all boundary
+  headings are visible in the chunk.

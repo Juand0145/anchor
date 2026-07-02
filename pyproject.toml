@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anchor-extract"
+version = "0.1.0"
+description = "Deterministic requirement extraction from PDFs via verbatim boundary anchors"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "Juand0145", email = "juand0145@gmail.com" }]
+dependencies = [
+  "pymupdf>=1.27",
+  "anthropic>=0.100",
+  "pandas",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["jupyter", "ipykernel"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["anchor_extract*"]
+
+[tool.setuptools.package-data]
+anchor_extract = ["prompts/*.txt", "prompts/examples/*.txt"]
