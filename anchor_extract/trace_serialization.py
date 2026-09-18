@@ -202,6 +202,10 @@ def _chunk_block(doc, run_id, ordinal, res):
     }
     if res.malformed_items:
         model_output["malformed"] = res.malformed_items
+    missing = getattr(res, "missing_section_ids", None) or []
+    if missing:
+        model_output["missing_section_ids"] = list(missing)
+        call["warnings"] = ["missing_section"]
 
     return {
         "chunk_id": ordinal,

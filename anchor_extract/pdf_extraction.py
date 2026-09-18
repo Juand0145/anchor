@@ -57,6 +57,7 @@ class DocumentExtraction:
     start_page: int
     end_page: int
     total_pages_in_pdf: int
+    text_cleaning: dict = field(default_factory=dict)
 
     # Cache of block starts to enable O(log n) lookup by offset
     _block_starts: list = field(default_factory=list, repr=False)
@@ -102,6 +103,7 @@ class DocumentExtraction:
             "n_blocks": len(self.blocks),
             "n_chars": len(self.full_text),
             "parser": f"{self.parser} {self.parser_version}",
+            "text_cleaning": dict(self.text_cleaning or {}),
         }
 
 
@@ -118,6 +120,77 @@ def _normalize_block_text(text: str) -> str:
     text = text.replace('\n', ' ')
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
+
+
+# Drop if y1 < HEADER_BAND_RATIO * page_height or y0 > FOOTER_BAND_RATIO * page_height.
+HEADER_BAND_RATIO = 0.07
+FOOTER_BAND_RATIO = 0.93
+
+
+def _classify_margin_bands(blocks: list, page_height: float) -> tuple:
+    """Split PyMuPDF blocks into (header, body, footer) by vertical band."""
+    if not blocks:
+        return [], [], []
+    top = HEADER_BAND_RATIO * page_height
+    bot = FOOTER_BAND_RATIO * page_height
+    header = [b for b in blocks if b[3] < top]
+    footer = [b for b in blocks if b[1] > bot]
+    body = [b for b in blocks if not (b[3] < top or b[1] > bot)]
+    return header, body, footer
+
+
+def _in_margin_band(bbox: tuple, page_height: float) -> bool:
+    if not bbox or not page_height:
+        return False
+    _x0, y0, _x1, y1 = bbox
+    return y1 < HEADER_BAND_RATIO * page_height or y0 > FOOTER_BAND_RATIO * page_height
+
+
+def _should_drop_block(
+    text: str,
+    bbox,
+    page_h,
+    drop_margin: bool,
+    patterns: Optional[list] = None,
+) -> bool:
+    """True if this normalized block is running header/footer/page-number noise."""
+    if not (text or "").strip():
+        return True
+    text = text.strip()
+    if drop_margin and _in_margin_band(bbox, page_h):
+        return True
+    if re.fullmatch(r"\d{1,4}", text):
+        return True
+    # Short digit/punct tokens (e.g. "11.") — not "(1)".
+    if len(text) <= 3 and re.fullmatch(r"[\d.\-–—]+", text):
+        return True
+    for pat in patterns or []:
+        if re.fullmatch(pat, text):
+            return True
+    return False
+
+
+def _sort_body_columns(body: list, page_width: float, page_height: float,
+                       col_tol: float = 50.0) -> list:
+    if not body:
+        return body
+    xs = sorted(b[0] for b in body)
+    clusters: list = []
+    for x in xs:
+        if not clusters or x - clusters[-1][-1] > col_tol:
+            clusters.append([x])
+        else:
+            clusters[-1].append(x)
+    centers = [sum(c) / len(c) for c in clusters] or [0.0]
+
+    def col_of(b) -> int:
+        if (b[2] - b[0]) > 0.6 * page_width:
+            return 0
+        return min(range(len(centers)), key=lambda i: abs(b[0] - centers[i]))
+
+    body = list(body)
+    body.sort(key=lambda b: (col_of(b), b[1], b[0]))
+    return body
 
 
 def _reading_order_blocks(blocks: list, page_width: float, page_height: float,
@@ -144,29 +217,8 @@ def _reading_order_blocks(blocks: list, page_width: float, page_height: float,
     if not blocks:
         return blocks
 
-    top = 0.07 * page_height
-    bot = 0.93 * page_height
-    header = [b for b in blocks if b[3] < top]
-    footer = [b for b in blocks if b[1] > bot]
-    body = [b for b in blocks if not (b[3] < top or b[1] > bot)]
-
-    xs = sorted(b[0] for b in body)
-    clusters: list = []
-    for x in xs:
-        if not clusters or x - clusters[-1][-1] > col_tol:
-            clusters.append([x])
-        else:
-            clusters[-1].append(x)
-    centers = [sum(c) / len(c) for c in clusters] or [0.0]
-
-    def col_of(b) -> int:
-        # Full-width blocks (spanning section headings) anchor to the leftmost
-        # column so they sort by vertical position at the start of the flow.
-        if (b[2] - b[0]) > 0.6 * page_width:
-            return 0
-        return min(range(len(centers)), key=lambda i: abs(b[0] - centers[i]))
-
-    body.sort(key=lambda b: (col_of(b), b[1], b[0]))
+    header, body, footer = _classify_margin_bands(blocks, page_height)
+    body = _sort_body_columns(body, page_width, page_height, col_tol)
     header.sort(key=lambda b: (b[1], b[0]))
     footer.sort(key=lambda b: (b[1], b[0]))
     return header + body + footer
@@ -176,18 +228,34 @@ def extract_pdf(pdf_path,
                 start_page: Optional[int] = None,
                 end_page: Optional[int] = None,
                 drop_empty_blocks: bool = True,
-                detect_columns: bool = True) -> DocumentExtraction:
+                detect_columns: bool = True,
+                drop_margin_blocks: Optional[bool] = None,
+                drop_block_patterns: Optional[list] = None) -> DocumentExtraction:
     """Extract text from a PDF preserving character offsets, page numbers, and bounding boxes.
+
+    Drops running headers/footers (margin bands) and configured full-block
+    patterns. ``full_text`` is the cleaned stream used for anchors and slices —
+    not a pixel-perfect PDF copy.
 
     Args:
         pdf_path: path to the PDF file.
         start_page: 1-based inclusive starting page. None = first page.
         end_page: 1-based inclusive last page. None = last page.
         drop_empty_blocks: skip blocks whose normalized text is empty.
+        drop_margin_blocks: drop header/footer bands. None = settings default.
+        drop_block_patterns: regexes matched against the full normalized block.
+            None = settings default list.
 
     Returns:
         DocumentExtraction with full_text, blocks (with bbox + char offsets) and pages.
     """
+    from .settings import PDF_TEXT_CLEANING
+
+    if drop_margin_blocks is None:
+        drop_margin_blocks = bool(PDF_TEXT_CLEANING.get("drop_margin_blocks", True))
+    if drop_block_patterns is None:
+        drop_block_patterns = list(PDF_TEXT_CLEANING.get("drop_block_patterns") or [])
+
     pdf_path = str(pdf_path)
 
     # sha256 of the raw bytes - serves as a stable identifier for provenance and caching.
@@ -207,31 +275,49 @@ def extract_pdf(pdf_path,
     blocks: list = []
     pages: list = []
     cursor = 0  # running offset in full_text; equals len(''.join(parts)) at any moment
+    n_margin_dropped = 0
+    n_pattern_dropped = 0
+    n_seen = 0
 
     for page_idx in range(s, e):
         page = doc[page_idx]
+        page_h = page.rect.height
+        page_w = page.rect.width
         # block tuple format from PyMuPDF: (x0, y0, x1, y1, text, block_no, block_type)
         # block_type: 0 = text, 1 = image. We keep only text blocks.
         if detect_columns:
-            # Column-aware reading order: PyMuPDF's sort=True reads ACROSS columns
-            # row-by-row and scrambles multi-column pages, which breaks the
-            # contiguous-span contract anchors rely on. _reading_order_blocks
-            # degrades to a plain top-to-bottom sort on single-column pages.
-            page_blocks = [b for b in page.get_text("blocks") if b[6] == 0]
-            page_blocks = _reading_order_blocks(
-                page_blocks, page.rect.width, page.rect.height
-            )
+            raw_blocks = [b for b in page.get_text("blocks") if b[6] == 0]
+            header, body, footer = _classify_margin_bands(raw_blocks, page_h)
+            body = _sort_body_columns(body, page_w, page_h)
+            header.sort(key=lambda b: (b[1], b[0]))
+            footer.sort(key=lambda b: (b[1], b[0]))
+            if drop_margin_blocks:
+                n_margin_dropped += len(header) + len(footer)
+                page_blocks = body
+            else:
+                page_blocks = header + body + footer
         else:
-            # sort=True orders blocks by (y, x); correct for single-column docs.
             page_blocks = [b for b in page.get_text("blocks", sort=True) if b[6] == 0]
+            if drop_margin_blocks:
+                header, body, footer = _classify_margin_bands(page_blocks, page_h)
+                n_margin_dropped += len(header) + len(footer)
+                page_blocks = body
 
         page_char_start = cursor
         n_blocks_in_page = 0
 
-        for pb_idx, b in enumerate(page_blocks):
+        for b in page_blocks:
+            n_seen += 1
             x0, y0, x1, y1, raw_text, block_no, _ = b
             text = _normalize_block_text(raw_text)
+            bbox = (round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2))
             if drop_empty_blocks and not text:
+                n_pattern_dropped += 1
+                continue
+            if _should_drop_block(
+                text, bbox, page_h, drop_margin=False, patterns=drop_block_patterns,
+            ):
+                n_pattern_dropped += 1
                 continue
 
             # The invariant full_text[char_start:char_end] == text is preserved
@@ -246,10 +332,10 @@ def extract_pdf(pdf_path,
                 char_start=block_start,
                 char_end=block_end,
                 page=page_idx + 1,
-                bbox=(round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)),
+                bbox=bbox,
                 text=text,
                 block_no=block_no,
-                page_block_idx=pb_idx,
+                page_block_idx=n_blocks_in_page,
             ))
 
             parts.append('\n')
@@ -264,14 +350,23 @@ def extract_pdf(pdf_path,
 
         pages.append(PageInfo(
             page_num=page_idx + 1,
-            width=round(page.rect.width, 2),
-            height=round(page.rect.height, 2),
+            width=round(page_w, 2),
+            height=round(page_h, 2),
             char_start=page_char_start,
             char_end=cursor,
             n_blocks=n_blocks_in_page,
         ))
 
     doc.close()
+
+    n_removed = n_margin_dropped + n_pattern_dropped
+    text_cleaning = {
+        "drop_margin_blocks": drop_margin_blocks,
+        "margin_dropped": n_margin_dropped,
+        "pattern_dropped": n_pattern_dropped,
+        "n_blocks_removed": n_removed,
+        "n_blocks_seen": n_seen + n_margin_dropped,
+    }
 
     return DocumentExtraction(
         pdf_path=pdf_path,
@@ -284,4 +379,5 @@ def extract_pdf(pdf_path,
         start_page=s + 1,
         end_page=e,
         total_pages_in_pdf=total_pages,
+        text_cleaning=text_cleaning,
     )

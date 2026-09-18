@@ -13,7 +13,7 @@ from .anchor_extraction import (
     summarize_extractions,
 )
 from .pdf_extraction import DocumentExtraction, extract_pdf
-from .settings import CLAUDE_CONFIG, PDF_PROCESSING
+from .settings import CLAUDE_CONFIG, PDF_PROCESSING, PDF_TEXT_CLEANING
 from .trace_serialization import (
     build_extraction_run,
     build_requirements_doc,
@@ -39,7 +39,13 @@ def extract_document(
     ``detection_prompt``.
     """
     if doc is None:
-        doc = extract_pdf(pdf_path, start_page=start_page, end_page=end_page)
+        doc = extract_pdf(
+            pdf_path,
+            start_page=start_page,
+            end_page=end_page,
+            drop_margin_blocks=PDF_TEXT_CLEANING.get("drop_margin_blocks", True),
+            drop_block_patterns=PDF_TEXT_CLEANING.get("drop_block_patterns"),
+        )
     system_prompt = build_anchor_system_prompt(detection_prompt)
     if target_input_tokens is None:
         target_input_tokens = PDF_PROCESSING.get("target_input_tokens")

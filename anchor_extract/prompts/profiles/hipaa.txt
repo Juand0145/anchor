@@ -58,3 +58,20 @@ GRANULARITY AND BOUNDARIES:
   "(Addressable)", numbered/lettered identifier, or "§ NNN.NNN" heading starts
   immediately after the current requirement's final punctuation with no
   intervening non-requirement prose.
+
+COMPLETENESS (section headings in THIS chunk):
+- For every literal heading that starts a section in this chunk ("§ NNN.NNN"
+  plus the section title, e.g. "§ 160.103 Definitions."), emit exactly one
+  section-level unit when this profile treats that section as a single
+  requirement (applicability, definitions, scope, reserved-not-applicable
+  lists, and other whole-section units described above).
+- Definitions § 160.103 is mandatory: requirement_id "160.103", start_anchor
+  at the heading through the first disambiguating words of the body, end_anchor
+  at the section's trailing "[NN FR ..., ... 20NN]" bracket immediately before
+  the next "§" heading. Do not omit 160.103 because the body is long or
+  definitional.
+- Skipping a visible section id that sits between two emitted section ids is
+  an error (e.g. emitting 160.102 and 160.104 but not 160.103).
+- These completeness rules do not change granularity for Standards,
+  "(Required)" / "(Addressable)" specs, or lettered/numbered subparagraphs
+  elsewhere in the document.

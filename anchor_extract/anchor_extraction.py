@@ -339,6 +339,8 @@ class ExtractionResult:
     raw_payload: dict = field(default_factory=dict)
     malformed_items: list = field(default_factory=list)
     attempts: list = field(default_factory=list)
+    # Section headings found in the chunk but absent from raw requirement_ids.
+    missing_section_ids: list = field(default_factory=list)
 
 
 def _derive_batch_status(requirements: list, malformed: list, stop_reason: str = "") -> str:
@@ -906,6 +908,7 @@ def extract_requirements_from_chunk(
     temperature: float = 0.0,
     max_retries: int = 3,
     retry_wait_s: int = 10,
+    section_boundary_pattern: Optional[str] = None,
 ) -> ExtractionResult:
     """Locate requirement boundaries in a chunk via LLM tool-use, then
     resolve each anchor to chunk-local offsets (whitespace-tolerant).
@@ -979,6 +982,9 @@ def extract_requirements_from_chunk(
         CallAttempt(a.model, a.attempt_no, a.duration_s, a.outcome, a.error_message)
         for a in llm_result.attempts
     ]
+    missing_section_ids = _audit_missing_section_ids(
+        chunk_text, raw_requirements, section_boundary_pattern,
+    )
     return ExtractionResult(
         requirements=validated,
         model_used=llm_result.model_used,
@@ -994,6 +1000,7 @@ def extract_requirements_from_chunk(
         raw_payload=payload,
         malformed_items=malformed,
         attempts=attempts,
+        missing_section_ids=missing_section_ids,
     )
 
 
@@ -1100,6 +1107,69 @@ def _compute_boundary_blocks(
     return boundaries
 
 
+def _normalize_heading_to_requirement_id(matched: str) -> str:
+    """Map a heading match to requirement_id form: strip § and collapse ws."""
+    s = (matched or "").strip()
+    s = re.sub(r"^§\s*", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _find_section_heading_ids(text: str, pattern: str) -> list:
+    """Section-level ids whose headings start a line in ``text``.
+
+    Uses the same match rules as ``_compute_boundary_blocks`` (pattern match
+    at line start, prefix tolerance). In-sentence citations are ignored.
+    Limitation: a wrapped line that *begins* with a § cross-reference can
+    still match if it satisfies the pattern.
+    """
+    if not pattern or not text:
+        return []
+    compiled = re.compile(pattern)
+    found: list = []
+    seen: set = set()
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        m = compiled.match(stripped)
+        if m is None:
+            prefix = stripped[:60]
+            m = compiled.search(prefix)
+            if m is None or m.start() > _BOUNDARY_PREFIX_TOLERANCE:
+                continue
+        ident = _normalize_heading_to_requirement_id(
+            m.group(1) if m.lastindex else m.group(0)
+        )
+        if ident and ident not in seen:
+            seen.add(ident)
+            found.append(ident)
+    return found
+
+
+def _audit_missing_section_ids(
+    chunk_text: str,
+    raw_requirements,
+    pattern: Optional[str],
+) -> list:
+    """Headings in the chunk minus raw ``requirement_id`` values (exact).
+
+    Compared against dict items before resolution filtering. Sub-paragraph
+    ids (e.g. 160.308(a)(1)) do not cover a section heading 160.308.
+    """
+    if not pattern:
+        return []
+    headings = _find_section_heading_ids(chunk_text, pattern)
+    emitted: set = set()
+    for r in raw_requirements or []:
+        if not isinstance(r, dict):
+            continue
+        rid = r.get("requirement_id")
+        if isinstance(rid, str) and rid.strip():
+            emitted.add(rid.strip())
+    return [h for h in headings if h not in emitted]
+
+
 def _build_batch(
     doc: DocumentExtraction,
     start_block_idx: int,
@@ -1111,8 +1181,11 @@ def _build_batch(
     ``target_input_tokens``. Always includes at least one block (a single block
     larger than the budget is sent whole rather than dropped).
 
-    When ``boundary_blocks`` is provided, packs whole requirement units (delimited
-    by those block indices) and never splits a unit across chunks.
+    When ``boundary_blocks`` is provided, each batch is exactly one whole unit
+    (from this cursor through the block before the next boundary, or
+    ``end_block_idx``). Never splits a unit. An oversized unit is sent whole.
+    Does not merge later units into the same call merely because they fit the
+    token budget (that path swallowed § 160.103 with many later sections).
 
     Returns (first_idx, last_idx, batch_text, batch_doc_offset_start) or None.
     """
@@ -1143,28 +1216,9 @@ def _build_batch(
         if b > start_block_idx and b <= end_block_idx
     ]
     first_unit_last = (nexts[0] - 1) if nexts else end_block_idx
-    chosen_last = first_unit_last
+    chosen_last = min(max(first_unit_last, start_block_idx), end_block_idx)
 
-    for b in nexts:
-        candidate_last = b - 1
-        candidate_tokens = (
-            (doc.blocks[candidate_last].char_end - batch_doc_offset_start)
-            // CHARS_PER_TOKEN_HEURISTIC + 1
-        )
-        if candidate_tokens > target_input_tokens and candidate_last > first_unit_last:
-            break
-        chosen_last = candidate_last
-
-    if nexts and nexts[-1] <= end_block_idx:
-        candidate_last = end_block_idx
-        candidate_tokens = (
-            (doc.blocks[candidate_last].char_end - batch_doc_offset_start)
-            // CHARS_PER_TOKEN_HEURISTIC + 1
-        )
-        if candidate_tokens <= target_input_tokens:
-            chosen_last = candidate_last
-
-    last_idx = min(max(chosen_last, start_block_idx), end_block_idx)
+    last_idx = chosen_last
     batch_text = doc.text_in_range(
         batch_doc_offset_start, doc.blocks[last_idx].char_end
     )
@@ -1760,6 +1814,7 @@ def extract_requirements_for_range(
                 model=model,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
+                section_boundary_pattern=requirement_boundary_pattern,
             )
         except Exception as exc:
             result = _failed_batch_result(exc, batch_text, first_idx, last_idx,
@@ -1787,7 +1842,9 @@ def extract_requirements_for_range(
             mf = len(result.malformed_items)
             print(f"{len(result.requirements)} reqs ({ok} ok, {tr} trunc) | "
                   f"stop={result.stop_reason} | {result.response_time_s}s"
-                  + (f" | malformed={mf}" if mf else ""))
+                  + (f" | malformed={mf}" if mf else "")
+                  + (f" | missing_section={result.missing_section_ids}"
+                     if result.missing_section_ids else ""))
 
         # CASE 1: output overflow -> shrink batch and retry same starting block.
         # With boundary-aware chunking, shrinking cannot split a unit; after
@@ -1901,6 +1958,7 @@ class FrameworkExtractionStats:
 
     # Per-batch explicit status counts (ok / empty / verbatim_failure / json_error / api_error)
     status_counts: dict = field(default_factory=dict)
+    n_missing_section_ids: int = 0
 
     def print_summary(self) -> None:
         print(f"=== Framework: {self.framework or '<unset>'} ===")
@@ -1971,6 +2029,9 @@ def summarize_extractions(extraction, framework: str = "") -> FrameworkExtractio
         n_flagged_requirements=sum(1 for r in requirements if not r.end_resolved),
         n_id_mismatches=sum(1 for r in requirements if getattr(r, "id_mismatch", False)),
         status_counts=dict(status_counts),
+        n_missing_section_ids=sum(
+            len(getattr(r, "missing_section_ids", None) or []) for r in results
+        ),
     )
 
 

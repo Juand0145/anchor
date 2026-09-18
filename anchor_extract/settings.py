@@ -36,3 +36,35 @@ AZURE_OPENAI_CONFIG = {
 EXAMPLE_AI_RMF_BOUNDARY_PATTERN = (
     r"^\s*(?:GOVERN|MAP|MEASURE|MANAGE)\s+\d+\.\d+\b"
 )
+
+# HIPAA CFR section heading at block start (after lstrip, prefix tolerance 8).
+# Matches "§ 160.103 Definitions." — requires a title word so wrapped
+# cross-references like "§ 164.501 of this subchapter" are not boundaries.
+# Capture group 1 is the section number (160.103).
+# HIPAA CFR section heading at block start (after lstrip, prefix tolerance 8).
+# Matches "§ 160.103 Definitions." — requires a title word so wrapped
+# cross-references like "§ 164.501 of this subchapter" are not boundaries.
+# Capture group 1 is the section number (160.103).
+EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN = (
+    r"^\s*§\s*(\d+\.\d+)\s+[A-Z]"
+)
+
+# Standalone page-number blocks (normalized text).
+GENERIC_DROP_BLOCK_PATTERNS = [
+    r"^\d{1,4}$",
+]
+
+# Running header/date as separate PyMuPDF blocks (also duplicated in body).
+EXAMPLE_HIPAA_DROP_BLOCK_PATTERNS = [
+    r"^HIPAA Administrative Simplification Regulation Text(?:\s+March 2013)?$",
+    r"^March 2013$",
+]
+
+_drop_margins_raw = (os.environ.get("ANCHOR_PDF_DROP_MARGINS") or "1").strip().lower()
+PDF_TEXT_CLEANING = {
+    "drop_margin_blocks": _drop_margins_raw not in {"0", "false", "no"},
+    "generic_drop_block_patterns": list(GENERIC_DROP_BLOCK_PATTERNS),
+    "drop_block_patterns": (
+        list(GENERIC_DROP_BLOCK_PATTERNS) + list(EXAMPLE_HIPAA_DROP_BLOCK_PATTERNS)
+    ),
+}

@@ -59,8 +59,15 @@ v0 name: `requirement_boundary_pattern` on `extract_document` /
 `extract_requirements_for_range`.
 
 When set, chunking packs whole units under the token budget. When omitted, the
-engine falls back to greedy block packing. Example (AI RMF Playbook):
-`anchor_extract.settings.EXAMPLE_AI_RMF_BOUNDARY_PATTERN`.
+engine falls back to greedy block packing.
+
+- AI RMF Playbook: `anchor_extract.settings.EXAMPLE_AI_RMF_BOUNDARY_PATTERN`
+- HIPAA (CFR `§ NNN.NNN` title headings):
+  `anchor_extract.settings.EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN`
+
+For HIPAA, pass the bundled regex as `requirement_boundary_pattern`. Larger
+page ranges need this so one call does not swallow many later sections with
+§ 160.103.
 
 ## v0 roles
 

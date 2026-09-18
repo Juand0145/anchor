@@ -138,9 +138,24 @@ RangeExtraction { results (telemetry), requirements (deliverable) }
 ```
 
 **[1] Text extraction.** `extract_pdf` reads the PDF with PyMuPDF, keeps text
-blocks only, and concatenates their normalized text into `full_text` while
-recording each block's character range, page, and bounding box. The PDF's
-sha256 is stored for provenance.
+blocks only, and concatenates their **cleaned** normalized text into `full_text`
+while recording each kept block's character range, page, and bounding box. The
+PDF's sha256 is of the raw file bytes (unchanged by cleaning). Cleaning is
+applied when `full_text` is built, so LLM chunks and stitched slices see the
+same string. `full_text` is normalized for extraction, not a pixel-perfect copy
+of the PDF.
+
+Dropped by default (see `PDF_TEXT_CLEANING` / `extract_pdf` kwargs):
+
+- **Margin bands.** Header (`y1 < 0.07 * page_height`) and footer
+  (`y0 > 0.93 * page_height`) blocks are omitted when `drop_margin_blocks=True`.
+- **Page-number blocks.** Normalized text matching `^\d{1,4}$`.
+- **Profile patterns.** Full-block regexes (e.g. HIPAA running header
+  `HIPAA Administrative Simplification Regulation Text`, `March 2013`) catch
+  header text PyMuPDF sometimes places in the body stream.
+
+Dropped blocks never receive `char_start`/`char_end`. The block invariant still
+holds for every kept block.
 
 **[2] Block normalization.** Each block is reflowed: end-of-line hyphenation is
 repaired conservatively, wrap newlines collapse to spaces, runs of whitespace
