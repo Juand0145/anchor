@@ -1,4 +1,8 @@
-"""anchor-extract: deterministic requirement extraction via verbatim boundary anchors."""
+"""anchor-extract: verifiable PDF span extraction via verbatim boundary anchors.
+
+Core engine (anchors, not bodies) plus extraction profiles that define which
+logical units to extract. v0 public names remain requirement-centric.
+"""
 
 from .anchor_extraction import (
     ANCHOR_INPUT_SCHEMA,

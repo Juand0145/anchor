@@ -33,7 +33,11 @@ def extract_document(
     target_input_tokens: Optional[int] = None,
     verbose: bool = True,
 ) -> RangeExtraction:
-    """Extract requirements from a PDF using a framework detection prompt."""
+    """Extract logical units from a PDF using an extraction-profile detection prompt.
+
+    v0 names: units are returned as ``requirements``; the profile string is
+    ``detection_prompt``.
+    """
     if doc is None:
         doc = extract_pdf(pdf_path, start_page=start_page, end_page=end_page)
     system_prompt = build_anchor_system_prompt(detection_prompt)

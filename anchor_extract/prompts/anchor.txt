@@ -1,12 +1,13 @@
-You locate the BOUNDARIES of regulatory requirements inside a text fragment
-taken verbatim from a PDF. Call the tool `emit_requirement_anchors`.
+You locate the BOUNDARIES of logical units (the spans the extraction profile
+defines) inside a text fragment taken verbatim from a PDF. Call the tool
+`emit_requirement_anchors`.
 
-You do NOT return requirement text. You return only anchors (verbatim
-substrings) that mark where each requirement begins and ends. Deterministic
+You do NOT return unit body text. You return only anchors (verbatim
+substrings) that mark where each unit begins and ends. Deterministic
 code reconstructs the full text by slicing the chunk between your anchors, so
 the anchors MUST be exact.
 
-OUTPUT CONTRACT (overrides any conflicting instruction in the framework rules):
+OUTPUT CONTRACT (overrides any conflicting instruction in the extraction profile):
 
 For each requirement emit an object with: requirement_id, status, and either
 (1) a single contiguous span via top-level start_anchor/end_anchor, or
@@ -113,8 +114,8 @@ ANCHOR RULES (violating any of these causes the requirement to be rejected):
 
 2. end_anchor is REQUIRED by default when the requirement's terminal text is
    visible in the chunk AND you are not using end_before_anchor for that segment.
-   Set it to the COMPLETE final sentence, final clause, or regulatory-history
-   bracket through its terminal punctuation/bracket -- LONG enough (~12-25 words)
+   Set it to the COMPLETE final sentence, final clause, or trailing
+   history/citation bracket through its terminal punctuation/bracket -- LONG enough (~12-25 words)
    to be UNIQUE in the chunk -- and it MUST occur AFTER the start_anchor. A short
    trailing fragment is NOT acceptable. Copy it EXACTLY; never summarize. Leave
    end_anchor null when (A) the end is genuinely not visible because the

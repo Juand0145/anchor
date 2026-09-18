@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "anchor-extract"
 version = "0.1.0"
-description = "Deterministic requirement extraction from PDFs via verbatim boundary anchors"
+description = "Verifiable PDF span extraction via verbatim boundary anchors (core engine + extraction profiles)"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -25,4 +25,4 @@ where = ["."]
 include = ["anchor_extract*"]
 
 [tool.setuptools.package-data]
-anchor_extract = ["prompts/*.txt", "prompts/examples/*.txt"]
+anchor_extract = ["prompts/*.txt", "prompts/profiles/*.txt"]

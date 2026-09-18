@@ -5,14 +5,14 @@ Builds two JSON artifacts from a ``RangeExtraction``:
 * ``extraction_run.json`` -- FULL execution trace: run + document + model
   metadata, and for every chunk the call telemetry, the anchors the model
   returned, and how each anchor resolved. This is the debugging surface.
-* ``requirements.json`` -- the LEAN deliverable: the final stitched requirements
+* ``requirements.json`` -- the LEAN deliverable: the final stitched units
   with just enough traceability (run id, page, requirement id, anchors, source
   chunk) to link each one back to its extraction call in the run file.
 
 Design rule: store offsets + hashes, never the raw chunk text (it is fully
-reproducible from the PDF + blocks.xlsx). Body text lives only in
-``requirements.json``. Optional/noisy fields (attempts, malformed items) are
-emitted only when non-empty.
+reproducible from the PDF + ``DocumentExtraction.blocks``). Body text lives
+only in ``requirements.json``. Optional/noisy fields (attempts, malformed
+items) are emitted only when non-empty.
 
 ID model:
     document_id        = pdf sha256

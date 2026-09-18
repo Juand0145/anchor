@@ -1,20 +1,21 @@
-"""Anchor-based requirement extraction (Anthropic tool-use + deterministic recovery).
+"""Anchor-based span extraction (Anthropic tool-use + deterministic recovery).
 
-Production port of the validated ``anchor.ipynb`` pipeline. The LLM identifies
-ONLY semantic boundaries; Python owns offsets, slicing, validation, and
-provenance.
+Core engine: the LLM identifies ONLY semantic boundaries; Python owns offsets,
+slicing, validation, and provenance. An extraction profile decides which
+logical units to emit. v0 public names remain requirement-centric.
 
 Contract:
 
-* For each requirement the model returns anchors only -- never the requirement body.
-  A requirement may be a single contiguous span (start_anchor/end_anchor) or an
+* For each unit the model returns anchors only -- never the unit body.
+  A unit may be a single contiguous span (start_anchor/end_anchor) or an
   ordered ``segments`` array of disjoint spans.
 * ``status`` is one of ``complete`` / ``truncated_at_end`` / ``truncated_at_start``.
 * Anchors are resolved (whitespace-tolerant) to chunk offsets, translated to
   document offsets, and segment text is sliced from ``doc.full_text``.
-  Multi-span ``original_text`` is ``SEGMENT_SEPARATOR.join(segment slices)``.
-  Offsets are the source of truth.
-* A requirement that spans chunks is stitched via a single ``PendingRequirement``
+  ``original_text`` is the ``requirement``-role text only (joined with
+  ``SEGMENT_SEPARATOR`` when that role has multiple slices). Offsets are the
+  source of truth.
+* A unit that spans chunks is stitched via a single ``PendingRequirement``
   state as the orchestrator walks chunks FORWARD ONLY (no jumpback).
 * Anything that cannot be closed by a confirmed end anchor is emitted, bounded
   deterministically, and flagged (``end_resolved=False``) -- never dropped,
@@ -93,8 +94,9 @@ def _coerce_resolved_segment(seg) -> ResolvedSegment:
 
 
 # --------------------------------------------------------------------------- #
-# Tool-use schema: anchors only (framework-agnostic). The framework-specific
-# detection rules live in the system prompt composed by build_anchor_system_prompt.
+# Tool-use schema: anchors only. Public keys are requirement-centric (v0).
+# Profile detection rules live in the system prompt composed by
+# build_anchor_system_prompt. Role enum is fixed to three values.
 # --------------------------------------------------------------------------- #
 ANCHOR_TOOL_NAME = "emit_requirement_anchors"
 
@@ -165,9 +167,9 @@ ANCHOR_INPUT_SCHEMA = {
 
 
 # The generic anchor contract (output shape, boundary model, anchor rules) is
-# NOT hardcoded here: it is authored in ``Prompts/anchor.txt`` so it can be
-# edited without touching code. The framework-specific detection prompts live
-# alongside it in ``Prompts/requirements/``.
+# NOT hardcoded here: it is authored in ``anchor_extract/prompts/anchor.txt``
+# so it can be edited without touching code. Extraction-profile detection
+# prompts live in ``anchor_extract/prompts/profiles/``.
 ANCHOR_PROMPT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "prompts",
@@ -182,7 +184,7 @@ def _load_anchor_system_prompt(path: str = ANCHOR_PROMPT_PATH) -> str:
     except FileNotFoundError:
         raise FileNotFoundError(
             f"Generic anchor prompt not found at {path}. It must live in "
-            "Prompts/anchor.txt (do not hardcode it)."
+            "anchor_extract/prompts/anchor.txt (do not hardcode it)."
         )
     if not content:
         raise ValueError(f"Generic anchor prompt at {path} is empty.")
@@ -193,14 +195,15 @@ ANCHOR_SYSTEM_PROMPT_GENERIC = _load_anchor_system_prompt()
 
 
 def build_anchor_system_prompt(framework_detection_prompt: str) -> str:
-    """Compose the generic anchor contract with a framework-specific detection
+    """Compose the generic anchor contract with an extraction-profile detection
     prompt.
 
-    The framework prompt decides ONLY which spans are requirements and how
+    The profile decides ONLY which spans are logical units and how
     ``requirement_id`` is formatted. The output format stays anchors-only as
     defined by the generic block, which explicitly takes precedence over any
-    conflicting output instruction the framework prompt may still contain
+    conflicting output instruction the profile prompt may still contain
     (legacy prompts ask for full ``original_text``/``source_quote``).
+    Parameter name ``framework_detection_prompt`` is v0 API.
     """
     return (
         ANCHOR_SYSTEM_PROMPT_GENERIC
@@ -218,13 +221,13 @@ def build_anchor_system_prompt(framework_detection_prompt: str) -> str:
 # --------------------------------------------------------------------------- #
 @dataclass
 class ExtractedRequirement:
-    """One requirement located by anchors, after deterministic text recovery.
+    """One logical unit located by anchors, after deterministic text recovery.
 
-    ``original_text`` is NOT produced by the LLM: for a single span it is the slice
-    of ``doc.full_text`` between resolved anchors; for multi-span requirements it
-    is ``SEGMENT_SEPARATOR.join(slice for each resolved segment)``. The contiguous
+    v0 type name remains ``ExtractedRequirement``. ``original_text`` is NOT
+    produced by the LLM: it is the ``requirement``-role text only (a single
+    slice, or ``SEGMENT_SEPARATOR.join`` of that role's slices). The contiguous
     invariant ``full_text[start:end] == original_text`` holds only for single-span
-    requirements; multi-span uses per-segment slices instead.
+    units; multi-span uses per-segment slices instead.
 
     ``doc_offset_start``/``doc_offset_end`` are the BOUNDING span (first segment
     start through last segment end). When ``n_segments > 1`` they are NOT a clean
