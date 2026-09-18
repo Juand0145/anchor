@@ -15,6 +15,7 @@ dependencies = [
   "anthropic>=0.100",
   "pandas",
   "python-dotenv",
+  "openai>=1.40",
 ]
 
 [project.optional-dependencies]

@@ -32,8 +32,22 @@ python -m venv .venv
 # source .venv/bin/activate  # macOS/Linux
 pip install -e .
 # or: pip install -r requirements.txt
-cp .env.example .env       # set ANTHROPIC_API_KEY
+cp .env.example .env       # set Azure OpenAI and/or ANTHROPIC_API_KEY
 ```
+
+## LLM providers
+
+`ANCHOR_LLM_PROVIDER` is `auto` (default), `azure`, or `anthropic`.
+
+- **auto:** Azure if `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
+  `AZURE_OPENAI_DEPLOYMENT` are set; otherwise Anthropic if `ANTHROPIC_API_KEY`
+  is set.
+- **Azure:** also set `AZURE_OPENAI_API_VERSION` (use a version that supports
+  chat tools, e.g. `2024-08-01-preview` or newer). The deployment name is the
+  model id on API calls (`model=` on `extract_document` overrides it).
+- **Anthropic:** still supported; Claude fallback chain unchanged.
+
+See `.env.example`. Keys are read from the environment (e.g. `load_dotenv()`).
 
 ## Quickstart
 

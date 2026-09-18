@@ -1,4 +1,4 @@
-"""Anchor-based span extraction (Anthropic tool-use + deterministic recovery).
+"""Anchor-based span extraction (LLM tool-use + deterministic recovery).
 
 Core engine: the LLM identifies ONLY semantic boundaries; Python owns offsets,
 slicing, validation, and provenance. An extraction profile decides which
@@ -21,7 +21,7 @@ Contract:
   deterministically, and flagged (``end_resolved=False``) -- never dropped,
   never looped on.
 
-The Anthropic client and model-fallback chain are reused from
+The LLM client (Anthropic or Azure OpenAI) is reused from
 ``anchor_extract.llm_client``.
 """
 
@@ -34,9 +34,7 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
-import anthropic
-
-from .llm_client import get_anthropic_client, _build_model_chain
+from .llm_client import _build_model_chain, invoke_anchor_tool
 from .pdf_extraction import DocumentExtraction
 
 
@@ -909,7 +907,7 @@ def extract_requirements_from_chunk(
     max_retries: int = 3,
     retry_wait_s: int = 10,
 ) -> ExtractionResult:
-    """Locate requirement boundaries in a chunk via Anthropic tool-use, then
+    """Locate requirement boundaries in a chunk via LLM tool-use, then
     resolve each anchor to chunk-local offsets (whitespace-tolerant).
 
     Raises:
@@ -918,74 +916,23 @@ def extract_requirements_from_chunk(
     """
     chunk_hash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
 
-    tools = [{
-        "name": ANCHOR_TOOL_NAME,
-        "description": "Emit the boundary anchors of the regulatory requirements found in the provided chunk.",
-        "input_schema": ANCHOR_INPUT_SCHEMA,
-    }]
-    system_blocks = [{
-        "type": "text",
-        "text": system_prompt,
-        "cache_control": {"type": "ephemeral"},
-    }]
-    messages = [{"role": "user", "content": chunk_text}]
+    llm_result = invoke_anchor_tool(
+        system_prompt,
+        chunk_text,
+        model=model,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        max_retries=max_retries,
+        retry_wait_s=retry_wait_s,
+        tool_name=ANCHOR_TOOL_NAME,
+        tool_description=(
+            "Emit the boundary anchors of the regulatory requirements "
+            "found in the provided chunk."
+        ),
+        input_schema=ANCHOR_INPUT_SCHEMA,
+    )
 
-    client = get_anthropic_client()
-    last_exception = None
-    response = None
-    used_model = None
-    response_time = 0.0
-    attempts: list = []
-
-    for current_model in _build_model_chain(model):
-        for attempt_no in range(1, max_retries + 1):
-            t0 = time.time()
-            try:
-                response = client.messages.create(
-                    model=current_model,
-                    max_tokens=max_output_tokens,
-                    temperature=temperature,
-                    system=system_blocks,
-                    tools=tools,
-                    tool_choice={"type": "tool", "name": ANCHOR_TOOL_NAME},
-                    messages=messages,
-                )
-                duration = time.time() - t0
-                response_time = duration
-                used_model = current_model
-                attempts.append(CallAttempt(current_model, attempt_no, round(duration, 3), "ok"))
-                break
-            except anthropic.NotFoundError as e:
-                duration = time.time() - t0
-                attempts.append(CallAttempt(current_model, attempt_no, round(duration, 3),
-                                            "not_found", str(e)[:200]))
-                last_exception = e
-                break
-            except (anthropic.APIError, anthropic.APIConnectionError) as e:
-                duration = time.time() - t0
-                is_connection = isinstance(e, anthropic.APIConnectionError)
-                status_code = getattr(e, "status_code", None)
-                # Retry ONLY transient failures; non-transient 4xx fail fast.
-                retryable = is_connection or status_code in {408, 409, 429, 500, 502, 503, 504, 529}
-                outcome = "connection_error" if is_connection else "api_error"
-                attempts.append(CallAttempt(current_model, attempt_no, round(duration, 3),
-                                            outcome, str(e)[:200]))
-                last_exception = e
-                if retryable and attempt_no < max_retries:
-                    time.sleep(retry_wait_s)
-                else:
-                    break
-        if response is not None:
-            break
-
-    if response is None:
-        raise RuntimeError(f"All models exhausted. Last error: {last_exception}")
-
-    tool_block = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_block is None:
-        raise RuntimeError("Model returned no tool_use block despite tool_choice forcing it.")
-
-    payload = tool_block.input
+    payload = llm_result.payload if isinstance(llm_result.payload, dict) else {}
     raw_requirements = payload.get("requirements", [])
 
     # Recover the recurring small-model failure where `requirements` is a single
@@ -1028,19 +975,22 @@ def extract_requirements_from_chunk(
         if not isinstance(r, dict):
             malformed.append({"reason": "not-a-dict", "value": r})
 
-    usage = response.usage
+    attempts = [
+        CallAttempt(a.model, a.attempt_no, a.duration_s, a.outcome, a.error_message)
+        for a in llm_result.attempts
+    ]
     return ExtractionResult(
         requirements=validated,
-        model_used=used_model,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
-        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-        response_time_s=round(response_time, 3),
-        stop_reason=response.stop_reason,
+        model_used=llm_result.model_used,
+        input_tokens=llm_result.input_tokens,
+        output_tokens=llm_result.output_tokens,
+        cache_creation_tokens=llm_result.cache_creation_tokens,
+        cache_read_tokens=llm_result.cache_read_tokens,
+        response_time_s=llm_result.response_time_s,
+        stop_reason=llm_result.stop_reason,
         chunk_hash=chunk_hash[:16],
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        batch_status=_derive_batch_status(validated, malformed, response.stop_reason),
+        batch_status=_derive_batch_status(validated, malformed, llm_result.stop_reason),
         raw_payload=payload,
         malformed_items=malformed,
         attempts=attempts,
