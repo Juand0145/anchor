@@ -11,7 +11,10 @@ from anchor_extract.anchor_extraction import (
     _estimate_tokens,
 )
 from anchor_extract.pdf_extraction import DocumentExtraction, TextBlock
-from anchor_extract.settings import EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN
+from anchor_extract.settings import (
+    EXAMPLE_AI_RMF_BOUNDARY_PATTERN,
+    EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN,
+)
 
 
 def _make_doc(texts: list[str]) -> DocumentExtraction:
@@ -73,7 +76,7 @@ class TestBuildBatch(unittest.TestCase):
             cursor = li + 1
         self.assertEqual(len(batches), 3)
 
-    def test_does_not_swallow_remainder_when_all_units_fit(self):
+    def test_packs_all_units_when_under_budget(self):
         pad = "x" * 20
         texts = []
         for u in range(3):
@@ -86,9 +89,58 @@ class TestBuildBatch(unittest.TestCase):
         self.assertIsNotNone(b)
         fi, li, text, _off = b
         self.assertEqual(fi, 0)
-        self.assertEqual(li, 4)
+        self.assertEqual(li, last)
         self.assertIn("160.102", text)
-        self.assertNotIn("160.104", text)
+        self.assertIn("160.104", text)
+
+    def test_packs_two_small_units_then_oversized_alone(self):
+        # ~100, ~100, ~5000 tok; budget 1000 → 2 batches (two small + one large).
+        def unit(heading: str, target_tok: int) -> list[str]:
+            body_chars = max(0, target_tok * 4 - len(heading) - 1)
+            return [heading, "x" * body_chars]
+
+        texts = []
+        texts.extend(unit("§ 160.101 A.", 100))
+        texts.extend(unit("§ 160.102 B.", 100))
+        texts.extend(unit("§ 160.103 C.", 5000))
+        doc = _make_doc(texts)
+        last = len(doc.blocks) - 1
+        bounds = [0, 2, 4]
+        batches = []
+        cursor = 0
+        while cursor <= last:
+            b = _build_batch(doc, cursor, last, 1000, boundary_blocks=bounds)
+            self.assertIsNotNone(b)
+            fi, li, _text, _off = b
+            batches.append((fi, li, [x for x in bounds if fi <= x <= li]))
+            cursor = li + 1
+        self.assertEqual(len(batches), 2)
+        self.assertEqual(batches[0][2], [0, 2])
+        self.assertEqual(batches[1][2], [4])
+
+    def test_ai_rmf_does_not_pack_units_over_budget(self):
+        pad = "x" * 20
+        texts = []
+        for ident in ("GOVERN 1.1", "MAP 1.2", "MEASURE 1.3"):
+            texts.append(f"{ident} Title.")
+            texts.extend([pad] * 4)
+        doc = _make_doc(texts)
+        last = len(doc.blocks) - 1
+        bounds = _compute_boundary_blocks(
+            doc, EXAMPLE_AI_RMF_BOUNDARY_PATTERN, 0, last,
+        )
+        self.assertEqual(bounds, [0, 5, 10])
+        batches = []
+        cursor = 0
+        while cursor <= last:
+            b = _build_batch(doc, cursor, last, 40, boundary_blocks=bounds)
+            self.assertIsNotNone(b)
+            fi, li, _text, _off = b
+            starts = [x for x in bounds if fi <= x <= li]
+            self.assertEqual(len(starts), 1, f"batch {fi}-{li} spans units {starts}")
+            batches.append((fi, li))
+            cursor = li + 1
+        self.assertEqual(len(batches), 3)
 
     def test_greedy_path_packs_consecutive_blocks(self):
         texts = ["aaaa " * 10] * 6

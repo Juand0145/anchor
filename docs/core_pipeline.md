@@ -464,10 +464,13 @@ the cross-chunk merge.
   whose text *starts a new unit*, i.e. matches the profile's
   `requirement_boundary_pattern` at (or within `_BOUNDARY_PREFIX_TOLERANCE = 8`
   chars of) its beginning. Empty when no pattern is configured.
-- With boundaries, `_build_batch` packs **whole units**: it extends from the
-  cursor to just before the next boundary, then keeps adding whole units while the
-  estimate stays under budget, and never ends a batch mid-unit. Always includes at
-  least one unit (an oversized single unit is sent whole rather than dropped).
+- With boundaries, `_build_batch` packs **whole units under the token budget**:
+  first unit is the cursor through the block before the next boundary, then
+  later units are added one at a time while the estimate stays `<=` budget.
+  Never ends a batch mid-unit. Always includes at least one unit (an oversized
+  single unit is sent whole rather than dropped). Does **not** dump the entire
+  remainder in one shot merely because the tail fits; packing stops before a
+  unit that would exceed the budget.
 - Without a pattern, `_build_batch` falls back to greedy consecutive-block
   packing under the budget (at least one block always included).
 

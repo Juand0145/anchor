@@ -1181,11 +1181,14 @@ def _build_batch(
     ``target_input_tokens``. Always includes at least one block (a single block
     larger than the budget is sent whole rather than dropped).
 
-    When ``boundary_blocks`` is provided, each batch is exactly one whole unit
-    (from this cursor through the block before the next boundary, or
-    ``end_block_idx``). Never splits a unit. An oversized unit is sent whole.
-    Does not merge later units into the same call merely because they fit the
-    token budget (that path swallowed § 160.103 with many later sections).
+    When ``boundary_blocks`` is provided, pack whole units under the budget:
+    the first unit is ``[start_block_idx .. next_boundary-1]`` (or
+    ``end_block_idx``), then subsequent whole units are added while
+    ``est_tokens`` through the next unit's last block stays
+    ``<= target_input_tokens``. Never splits a unit. An oversized first unit
+    is sent whole. Does not dump the entire remainder in one shot merely
+    because the full tail fits; later units are added one at a time and
+    packing stops before a unit that would exceed the budget.
 
     Returns (first_idx, last_idx, batch_text, batch_doc_offset_start) or None.
     """
@@ -1217,6 +1220,22 @@ def _build_batch(
     ]
     first_unit_last = (nexts[0] - 1) if nexts else end_block_idx
     chosen_last = min(max(first_unit_last, start_block_idx), end_block_idx)
+
+    def _tokens_through(last_i: int) -> int:
+        return (
+            (doc.blocks[last_i].char_end - batch_doc_offset_start)
+            // CHARS_PER_TOKEN_HEURISTIC + 1
+        )
+
+    for i, unit_start in enumerate(nexts):
+        if i + 1 < len(nexts):
+            unit_last = nexts[i + 1] - 1
+        else:
+            unit_last = end_block_idx
+        unit_last = min(max(unit_last, unit_start), end_block_idx)
+        if _tokens_through(unit_last) > target_input_tokens:
+            break
+        chosen_last = unit_last
 
     last_idx = chosen_last
     batch_text = doc.text_in_range(

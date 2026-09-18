@@ -98,3 +98,9 @@ A good detection prompt:
 
 Full contract: [`anchor_extract/prompts/anchor.txt`](../anchor_extract/prompts/anchor.txt).
 Pipeline internals: [core_pipeline.md](core_pipeline.md).
+
+## Chunk-budget sweep
+
+Offline batch plans (no LLM) and an optional live `target_input_tokens` sweep:
+[testing.md](testing.md). Use this to compare `n_batches` vs missing § 160.103
+when multi-unit packing is added.
