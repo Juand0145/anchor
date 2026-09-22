@@ -1,8 +1,8 @@
 """anchor: phased public API over the anchor-extract core engine.
 
-Phase 1 ``read`` ingests a PDF or plain-text file into the positional block
-model; phase 2 ``blocks`` renders that document as JSON. Extraction (phase 3+)
-stays in ``anchor_extract.extract_document``.
+Phase 1 ``read`` ingests a PDF or plain-text file into a ``Document``; phase 2
+``Document.blocks`` renders it as JSON. Extraction (phase 3+) stays in
+``anchor_extract.extract_document``, which consumes ``Document.extraction``.
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ from typing import Optional, Union
 from anchor_extract.ingest import extract_text
 from anchor_extract.pdf_extraction import DocumentExtraction, TextBlock, extract_pdf
 
+from .document import Document
 from .serialization import BLOCKS_SCHEMA_VERSION, blocks
 
 __all__ = [
     "BLOCKS_SCHEMA_VERSION",
+    "Document",
     "DocumentExtraction",
     "TextBlock",
     "blocks",
@@ -28,7 +30,7 @@ def read(path: Union[str, Path],
          *,
          start_page: Optional[int] = None,
          end_page: Optional[int] = None,
-         **pdf_kwargs) -> DocumentExtraction:
+         **pdf_kwargs) -> Document:
     """Read a source file into the positional block model.
 
     Args:
@@ -38,16 +40,19 @@ def read(path: Union[str, Path],
         **pdf_kwargs: forwarded to ``extract_pdf``; ignored for text.
 
     Returns:
-        DocumentExtraction usable as ``extract_document(..., doc=...)``.
+        Document. Pass ``document.extraction`` to
+        ``extract_document(..., doc=...)``.
 
     Raises:
         ValueError: the suffix is neither ``.pdf`` nor ``.txt``.
     """
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
-        return extract_pdf(path, start_page=start_page, end_page=end_page, **pdf_kwargs)
+        return Document(
+            extract_pdf(path, start_page=start_page, end_page=end_page, **pdf_kwargs)
+        )
     if suffix == ".txt":
-        return extract_text(path)
+        return Document(extract_text(path))
     raise ValueError(
         f"unsupported source '{path}': expected a .pdf or .txt file, got '{suffix or 'no suffix'}'"
     )

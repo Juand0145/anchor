@@ -17,8 +17,9 @@ One logical unit can be several disjoint segments linked by a record id
 | **Extraction profile** | What counts as a unit, how ids are formatted, optional unit-boundary regex, role conventions | `anchor_extract/prompts/profiles/` |
 
 The engine is domain-agnostic. A profile specializes it for one document family.
-Bundled examples include the NIST AI RMF Playbook and HIPAA Administrative
-Simplification. Compliance is an **example domain**, not the product definition.
+Bundled examples are HIPAA Administrative Simplification (the primary
+walkthrough) and the NIST AI RMF Playbook. Compliance is an **example domain**,
+not the product definition.
 
 v0 public names stay requirement-centric (`extract_document`, `requirement_id`,
 `requirements.json`). See the mapping table in [docs/core_pipeline.md](docs/core_pipeline.md).
@@ -58,33 +59,36 @@ import json
 import anchor
 
 doc = anchor.read("pdf/hipaa-simplification-201303.pdf", start_page=11, end_page=12)
-print(json.dumps(anchor.blocks(doc), indent=2)[:500])
+print(json.dumps(doc.blocks(), indent=2)[:500])
 ```
 
 `anchor.read` also accepts plain `.txt` files (paragraphs become blocks; page
-arguments are ignored). The document it returns is the same
-`DocumentExtraction` that `extract_document(..., doc=doc)` consumes.
+arguments are ignored). It returns a `Document`; pass `doc.extraction` to
+`extract_document(..., doc=...)`, and use `anchor.blocks(doc)` if you prefer
+the module-level form.
 
 See [docs/phases.md](docs/phases.md) for the JSON shape and the text-ingest rules.
 
 ## Quickstart
 
-NIST AI RMF Playbook is the primary example profile:
+HIPAA Administrative Simplification is the primary example profile. Paths,
+pages and boundary pattern below match `anchor_demo.ipynb`:
 
 ```python
 from pathlib import Path
 from dotenv import load_dotenv
-from anchor_extract import extract_pdf, extract_document, to_requirements_json, save_json
-from anchor_extract.settings import EXAMPLE_AI_RMF_BOUNDARY_PATTERN
+import anchor
+from anchor_extract import extract_document, to_requirements_json, save_json
+from anchor_extract.settings import EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN
 
 load_dotenv()
-detection_prompt = Path("anchor_extract/prompts/profiles/ai_rmf_playbook.txt").read_text(encoding="utf-8")
-pdf_path = Path("../pdf/AI_RMF_Playbook.pdf")
+detection_prompt = Path("anchor_extract/prompts/profiles/hipaa.txt").read_text(encoding="utf-8")
+pdf_path = Path("pdf/hipaa-simplification-201303.pdf")
 
-doc = extract_pdf(str(pdf_path), start_page=5, end_page=10)
+doc = anchor.read(pdf_path, start_page=11, end_page=17)
 extraction = extract_document(
-    str(pdf_path), detection_prompt, doc=doc, start_page=5, end_page=10,
-    requirement_boundary_pattern=EXAMPLE_AI_RMF_BOUNDARY_PATTERN,
+    str(pdf_path), detection_prompt, doc=doc.extraction, start_page=11, end_page=17,
+    requirement_boundary_pattern=EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN,
 )
 
 for req in extraction.requirements:
@@ -95,10 +99,15 @@ for req in extraction.requirements:
         ok = doc.full_text[req.doc_offset_start:req.doc_offset_end] == req.original_text
         print("  invariant:", "ok" if ok else "BAD")
 
-save_json(to_requirements_json("demo", doc, extraction), "outputs/requirements.json")
+save_json(to_requirements_json("hipaa", doc.extraction, extraction), "outputs/requirements.json")
 ```
 
-Profile file: [`anchor_extract/prompts/profiles/ai_rmf_playbook.txt`](anchor_extract/prompts/profiles/ai_rmf_playbook.txt).
+Profile file: [`anchor_extract/prompts/profiles/hipaa.txt`](anchor_extract/prompts/profiles/hipaa.txt).
+
+Also bundled: the NIST AI RMF Playbook profile
+([`ai_rmf_playbook.txt`](anchor_extract/prompts/profiles/ai_rmf_playbook.txt),
+pattern `EXAMPLE_AI_RMF_BOUNDARY_PATTERN`) — the worked reference for
+non-contiguous, role-tagged units. Its PDF is not bundled in this repo.
 
 ## How to write an extraction profile
 

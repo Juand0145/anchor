@@ -15,19 +15,27 @@ def source_kind(document: DocumentExtraction) -> str:
     return "text" if document.parser == TEXT_PARSER else "pdf"
 
 
-def blocks(document: DocumentExtraction, *, include_full_text: bool = False) -> dict:
+def blocks(document, *, include_full_text: bool = False) -> dict:
     """Build the JSON-serializable block view of a document.
 
     Args:
-        document: result of ``anchor.read``.
+        document: ``Document`` from ``anchor.read``, or a bare
+            ``DocumentExtraction``.
         include_full_text: also emit the full document text stream.
 
     Returns:
         dict with schema_version, source, summary and blocks.
     """
+    # Local import: ``document`` imports this module, so a top-level import
+    # here would be circular.
+    from .document import Document
+
+    if isinstance(document, Document):
+        document = document.extraction
     if not isinstance(document, DocumentExtraction):
         raise TypeError(
-            f"blocks() expects a DocumentExtraction, got {type(document).__name__}"
+            "blocks() expects a Document or DocumentExtraction, got "
+            f"{type(document).__name__}"
         )
 
     doc_json = {

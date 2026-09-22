@@ -19,8 +19,8 @@ Canonical directory: [`anchor_extract/prompts/profiles/`](../anchor_extract/prom
 
 | File | Domain (example) |
 |---|---|
-| [`ai_rmf_playbook.txt`](../anchor_extract/prompts/profiles/ai_rmf_playbook.txt) | NIST AI RMF Playbook subcategories |
-| [`hipaa.txt`](../anchor_extract/prompts/profiles/hipaa.txt) | HIPAA Administrative Simplification (45 CFR 160/162/164) |
+| [`hipaa.txt`](../anchor_extract/prompts/profiles/hipaa.txt) | HIPAA Administrative Simplification (45 CFR 160/162/164) — primary walkthrough |
+| [`ai_rmf_playbook.txt`](../anchor_extract/prompts/profiles/ai_rmf_playbook.txt) | NIST AI RMF Playbook subcategories — non-contiguous reference |
 
 See [`profiles/README.md`](../anchor_extract/prompts/profiles/README.md) for
 document type and boundary-pattern notes.
@@ -36,7 +36,7 @@ You author **only** the profile block. Compose it with the generic contract:
 from pathlib import Path
 from anchor_extract import build_anchor_system_prompt
 
-detection_prompt = Path("anchor_extract/prompts/profiles/ai_rmf_playbook.txt").read_text(encoding="utf-8")
+detection_prompt = Path("anchor_extract/prompts/profiles/hipaa.txt").read_text(encoding="utf-8")
 system_prompt = build_anchor_system_prompt(detection_prompt)
 ```
 
@@ -61,9 +61,9 @@ v0 name: `requirement_boundary_pattern` on `extract_document` /
 When set, chunking packs whole units under the token budget. When omitted, the
 engine falls back to greedy block packing.
 
-- AI RMF Playbook: `anchor_extract.settings.EXAMPLE_AI_RMF_BOUNDARY_PATTERN`
 - HIPAA (CFR `§ NNN.NNN` title headings):
   `anchor_extract.settings.EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN`
+- AI RMF Playbook: `anchor_extract.settings.EXAMPLE_AI_RMF_BOUNDARY_PATTERN`
 
 For HIPAA, pass the bundled regex as `requirement_boundary_pattern`. Larger
 page ranges need this so one call does not swallow many later sections with
@@ -76,9 +76,9 @@ page ranges need this so one call does not swallow many later sections with
 arbitrary user-defined taxonomy. Additional roles are future work; do not
 emit values outside the enum.
 
-A profile may use only `requirement` (single-span units) or all three
-(non-contiguous units, as in the AI RMF Playbook). Different roles are never
-concatenated. `original_text` is the `requirement`-role text only.
+A profile may use only `requirement` (single-span units, as in HIPAA) or all
+three (non-contiguous units, as in the AI RMF Playbook). Different roles are
+never concatenated. `original_text` is the `requirement`-role text only.
 
 ## Checklist
 

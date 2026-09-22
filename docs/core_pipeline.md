@@ -685,12 +685,17 @@ any profile that obeys the anchor rules can drive the same resolver and stitcher
 
 # Part 3 — Example: AI RMF / compliance
 
+> The repo's primary walkthrough is HIPAA (`anchor_demo.ipynb`, the README
+> quickstart, [phases.md](phases.md)). This part stays on the AI RMF Playbook
+> because it is the reference case for **non-contiguous, role-tagged** units,
+> which HIPAA does not exercise.
+
 Compliance PDFs (HIPAA, ISO 27002, PCI, NIST, NIST AI RMF, …) are a natural
 fit for this engine. They are **example domains**, not the product definition.
 Bundled profiles:
 
-- [`ai_rmf_playbook.txt`](../anchor_extract/prompts/profiles/ai_rmf_playbook.txt)
 - [`hipaa.txt`](../anchor_extract/prompts/profiles/hipaa.txt)
+- [`ai_rmf_playbook.txt`](../anchor_extract/prompts/profiles/ai_rmf_playbook.txt)
 
 ### Non-contiguous units (AI RMF Playbook)
 
