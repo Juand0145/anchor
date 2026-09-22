@@ -1,15 +1,32 @@
-You identify HIPAA Administrative Simplification requirements inside the chunk
-(45 CFR Parts 160, 162, 164 — Privacy, Security, Breach Notification, and
-General/Administrative provisions) so their boundaries can be anchored.
+You locate the boundaries of HIPAA Administrative Simplification requirements
+inside the chunk (45 CFR Parts 160, 162, 164 — Privacy, Security, Breach
+Notification, and General/Administrative provisions). You anchor them; you never
+reproduce their text.
 
-These rules decide ONLY which spans are requirements and how requirement_id is
-formatted. The output shape (anchors and status) is defined by the anchor
-instructions above.
+These rules decide ONLY which spans are requirements, which roles they may use,
+and which metadata they carry. The output shape (anchors and status) is defined
+by the anchor instructions above.
 
-REQUIREMENT IDENTIFIER (requirement_id):
-- CFR-style hierarchical id WITHOUT the leading "§", e.g. "164.308(a)(1)(ii)(A)",
-  "164.306(a)(1)", "164.310(b)", "160.102". Concatenate the section number with
-  the parenthetical hierarchy where the obligation appears.
+ROLES (allowed set for this profile):
+- "requirement" only. HIPAA units are single-role: the anchored span IS the
+  regulatory text. Omitting role is equivalent to "requirement".
+- Do not emit "context" or "questionnaire" segments for this document.
+
+METADATA (per segment):
+- req_id (required): CFR-style hierarchical id WITHOUT the leading "§", e.g.
+  "164.308(a)(1)(ii)(A)", "164.306(a)(1)", "164.310(b)", "160.102". Concatenate
+  the section number with the parenthetical hierarchy where the obligation
+  appears.
+- title (optional): the section title as printed on the heading line, e.g.
+  "Applicability." for "§ 160.102 Applicability." — a verbatim substring of the
+  heading, never a summary.
+- Copy both values verbatim from text visible in this chunk; omit a key rather
+  than guess it.
+- req_id IS the identifier of the section as printed in the CFR. Do not emit a
+  top-level requirement_id. The engine copies req_id to the output without
+  reading it and numbers the items itself.
+
+IDENTIFIER RULES (apply to req_id):
 - Heading anchoring: emit a requirement for section "NNN.NNN" only if the literal
   heading "§ NNN.NNN" (allow spacing artifacts like "§NNN.NNN") appears in THIS
   chunk. If the governing heading is in a previous chunk, do not emit it here.
@@ -38,8 +55,10 @@ WHAT IS A REQUIREMENT (emit these):
 GRANULARITY AND BOUNDARIES:
 - Applicability/scope/enumeration sections that merely LIST regulated entities,
   persons, or transactions are ONE requirement for the WHOLE section (id = the
-  section number, e.g. "160.102"). The start_anchor is the "§ NNN.NNN <title>"
-  heading line; the end_anchor is the LAST text of the section — normally the
+  section number, e.g. "160.102"). The start_anchor runs from the
+  "§ NNN.NNN <title>" heading line THROUGH the first disambiguating words of the
+  body, so it cannot resolve to a table-of-contents entry or a cross-reference;
+  the end_anchor is the LAST text of the section — normally the
   trailing regulatory-history bracket "[NN FR ..., ... 20NN]", otherwise the final
   clause immediately before the next "§ NNN.NNN" heading.
   Capture the ENTIRE section: ALL lettered/numbered paragraphs (a) (b) (c) ... and
@@ -65,7 +84,7 @@ COMPLETENESS (section headings in THIS chunk):
   section-level unit when this profile treats that section as a single
   requirement (applicability, definitions, scope, reserved-not-applicable
   lists, and other whole-section units described above).
-- Definitions § 160.103 is mandatory: requirement_id "160.103", start_anchor
+- Definitions § 160.103 is mandatory: req_id "160.103", start_anchor
   at the heading through the first disambiguating words of the body, end_anchor
   at the section's trailing "[NN FR ..., ... 20NN]" bracket immediately before
   the next "§" heading. Do not omit 160.103 because the body is long or

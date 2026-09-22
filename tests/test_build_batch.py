@@ -1,11 +1,10 @@
-"""Unit tests for unit-aware _build_batch and section-coverage audit (stdlib)."""
+"""Unit tests for unit-aware _build_batch and boundary detection (stdlib)."""
 
 from __future__ import annotations
 
 import unittest
 
 from anchor_extract.anchor_extraction import (
-    _audit_missing_section_ids,
     _build_batch,
     _compute_boundary_blocks,
     _estimate_tokens,
@@ -176,29 +175,7 @@ class TestBuildBatch(unittest.TestCase):
         self.assertNotIn("160.104", text)
 
 
-class TestCoverageAudit(unittest.TestCase):
-    def test_missing_160_103(self):
-        text = "§ 160.102 Applicability.\nbody\n§ 160.103 Definitions.\nlong\n§ 160.104 Modifications.\n"
-        missing = _audit_missing_section_ids(
-            text,
-            [{"requirement_id": "160.102"}, {"requirement_id": "160.104"}],
-            EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN,
-        )
-        self.assertIn("160.103", missing)
-        self.assertNotIn("160.102", missing)
-
-    def test_emitted_160_103_not_missing(self):
-        text = "§ 160.102 Applicability.\n§ 160.103 Definitions.\n"
-        missing = _audit_missing_section_ids(
-            text,
-            [{"requirement_id": "160.102"}, {"requirement_id": "160.103"}],
-            EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN,
-        )
-        self.assertEqual(missing, [])
-
-    def test_no_pattern_empty(self):
-        self.assertEqual(_audit_missing_section_ids("§ 160.103 Definitions.", [], None), [])
-
+class TestBoundaryPattern(unittest.TestCase):
     def test_hipaa_pattern_on_compute_boundary_blocks(self):
         texts = [
             "preamble",

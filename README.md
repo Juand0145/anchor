@@ -7,7 +7,7 @@ spans, optionally groups segments by role, stitches multi-chunk units forward-on
 and validates provenance.
 
 One logical unit can be several disjoint segments linked by a record id
-(`requirement_id` in the v0 API).
+(`anchor_id` in the v0 API).
 
 ## Core engine vs extraction profile
 
@@ -23,6 +23,13 @@ not the product definition.
 
 v0 public names stay requirement-centric (`extract_document`, `requirement_id`,
 `requirements.json`). See the mapping table in [docs/core_pipeline.md](docs/core_pipeline.md).
+
+JSON artifacts are `schema_version` **2.2**: `anchor_id` (exported as
+`requirement_id` too) is the 1-based reading-order number of the unit and
+`span_key` is the positional key `{pdf_hash[:12]}:{doc_offset_start}` used for
+dedup. Those are the only ids the engine assigns; the identifier printed in the
+source (`160.103`, `GOVERN 1.2`) travels verbatim inside the segment
+`metadata`, which no engine code reads.
 
 ## Install
 
@@ -94,7 +101,7 @@ extraction = extract_document(
 for req in extraction.requirements:
     if not req.verbatim_match:
         continue
-    print(req.requirement_id, req.requirement_text[:80].strip())
+    print(req.anchor_id, req.requirement_text[:80].strip())
     if req.n_segments == 1 and req.doc_offset_start >= 0:
         ok = doc.full_text[req.doc_offset_start:req.doc_offset_end] == req.original_text
         print("  invariant:", "ok" if ok else "BAD")
@@ -111,10 +118,13 @@ non-contiguous, role-tagged units. Its PDF is not bundled in this repo.
 
 ## How to write an extraction profile
 
-You author **only** the profile block: what counts as a logical unit, how
-`requirement_id` is formatted, and (optionally) segment roles and heading
-boundaries. The generic anchor contract in `anchor_extract/prompts/anchor.txt` is
+You author **only** the profile block: what counts as a logical unit, how the
+source's identifier (`metadata.req_id`) is formatted, and (optionally) segment
+roles and heading boundaries. The generic anchor contract in `anchor_extract/prompts/anchor.txt` is
 fixed and composed automatically via `build_anchor_system_prompt(detection_prompt)`.
+
+Authoring guide: [prompt_instructions.md](prompt_instructions.md) — anchors,
+start/end boundary fields, roles, segment metadata, and common failures.
 
 See [docs/profiles.md](docs/profiles.md) for the checklist and bundled examples.
 

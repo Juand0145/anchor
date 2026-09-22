@@ -19,6 +19,8 @@ from .anchor_extraction import (
     build_role_texts,
     extract_requirements_for_range,
     extract_requirements_from_chunk,
+    generate_anchor_id,
+    generate_span_key,
     summarize_extractions,
 )
 from .pdf_extraction import DocumentExtraction, TextBlock, extract_pdf
@@ -57,6 +59,10 @@ __all__ = [
     "extract_pdf",
     "extract_requirements_for_range",
     "extract_requirements_from_chunk",
+    # generate_anchor_id is a deprecated alias of generate_span_key: since
+    # schema 2.1 anchor_id is the reading-order sequence, not a positional key.
+    "generate_anchor_id",
+    "generate_span_key",
     "make_run_id",
     "save_json",
     "summarize_extractions",

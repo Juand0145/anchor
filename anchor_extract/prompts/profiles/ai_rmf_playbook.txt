@@ -1,16 +1,31 @@
-You identify NIST AI Risk Management Framework (AI RMF) Playbook subcategory
-requirements inside the chunk so their boundaries can be anchored.
+You locate the boundaries of NIST AI Risk Management Framework (AI RMF) Playbook
+subcategory requirements inside the chunk. You anchor them; you never reproduce
+their text.
 
 The Playbook includes optional implementation guidance between the parts we
-extract. For this framework, emit ONE requirement per subcategory id using THREE
+extract. For this framework, emit ONE item per subcategory id using THREE
 role-tagged segments bounded by section HEADINGS. Use start_anchor,
 start_after_anchor, and end_before_anchor — do NOT guess final sentences.
 
-These rules decide ONLY which spans are requirements and how requirement_id is
-formatted. The output shape (anchors, roles, and status) is defined by the anchor
-instructions above.
+These rules decide ONLY which spans are requirements, which roles they may use,
+and which metadata they carry. The output shape (anchors, roles, and status) is
+defined by the anchor instructions above.
 
-REQUIREMENT IDENTIFIER (requirement_id):
+ROLES (allowed set for this profile — exactly these three, one segment each):
+- "requirement": the subcategory id and its outcome statement.
+- "context": the "About" narrative through "Suggested Actions".
+- "questionnaire": the Transparency & Documentation questions.
+- Do not invent other role names for this document.
+
+METADATA (per segment):
+- subcategory_id (required on every segment): the printed subcategory id, e.g.
+  "GOVERN 1.1". Copy it verbatim from the chunk; all three segments of one item
+  carry the SAME value.
+- subcategory_id IS the identifier of the subcategory as printed in the
+  Playbook. Do not emit a top-level requirement_id. The engine copies
+  subcategory_id to the output without reading it and numbers the items itself.
+
+SUBCATEGORY IDENTIFIER (subcategory_id):
 - Use the AI RMF subcategory id exactly as printed: Function name in uppercase
   followed by a space and number, e.g. "GOVERN 1.1", "MANAGE 2.3", "MAP 4.2",
   "MEASURE 2.10".
@@ -41,9 +56,9 @@ WHAT TO SKIP:
   page headers, page footers, and page artifacts.
 
 BOUNDARIES (anchor placement — use the segments array):
-- Emit one requirement object with requirement_id and status, plus a segments
-  array of three segment objects. Set end_anchor to null on each segment; use
-  heading boundaries instead.
+- Emit one item object with status, plus a segments array of three segment
+  objects each carrying metadata.subcategory_id. Set end_anchor to null on each
+  segment; use heading boundaries instead.
 
 Segment 0 — role="requirement" (id + outcome only):
 - start_anchor: subcategory id plus the beginning of the outcome statement,
@@ -75,7 +90,7 @@ Segment 2 — role="questionnaire" (T&D questions only, no heading):
   segment's boundary heading is not visible because the chunk was cut.
 
 CANONICAL EXAMPLE — "GOVERN 1.2":
-- requirement_id: "GOVERN 1.2"
+- every segment: metadata { "subcategory_id": "GOVERN 1.2" }
 - segments[0] role="requirement":
   - start_anchor: "GOVERN 1.2 The characteristics of trustworthy AI"
   - end_before_anchor: "About"
@@ -90,7 +105,7 @@ CANONICAL EXAMPLE — "GOVERN 1.2":
   - end_anchor: null
 
 CANONICAL EXAMPLE — "GOVERN 4.2":
-- requirement_id: "GOVERN 4.2"
+- every segment: metadata { "subcategory_id": "GOVERN 4.2" }
 - segments[0] role="requirement":
   - start_anchor: "GOVERN 4.2 Organizational teams document the risks"
   - end_before_anchor: "About"
@@ -113,3 +128,5 @@ COMMON FAILURES (do NOT do these):
   use start_after_anchor="Organizations can document the following".
 - WRONG: end_before_anchor null or status "truncated_at_end" when all boundary
   headings are visible in the chunk.
+- WRONG: a metadata subcategory_id that differs from the printed id, or
+  segments of the same item carrying different subcategory_id values.

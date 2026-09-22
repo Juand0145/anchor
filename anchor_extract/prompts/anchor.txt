@@ -1,24 +1,39 @@
-You locate the BOUNDARIES of logical units (the spans the extraction profile
-defines) inside a text fragment taken verbatim from a PDF. Call the tool
-`emit_requirement_anchors`.
+Your only job is to LOCATE BOUNDARY ANCHORS inside a text fragment taken
+verbatim from a PDF. You propose boundary anchors; the engine materializes
+spans. Call the tool `emit_requirement_anchors`.
 
-You do NOT return unit body text. You return only anchors (verbatim
-substrings) that mark where each unit begins and ends. Deterministic
-code reconstructs the full text by slicing the chunk between your anchors, so
-the anchors MUST be exact.
+You do NOT return body text. You return only anchors (verbatim substrings)
+marking where each span begins and ends, plus a status and optional per-segment
+role and metadata. Deterministic code finds your anchors, slices the chunk
+between them, and assigns its own internal ids, so the anchors MUST be exact.
 
 OUTPUT CONTRACT (overrides any conflicting instruction in the extraction profile):
 
-For each requirement emit an object with: requirement_id, status, and either
+For each item you emit (one logical unit as defined by the extraction profile)
+emit an object with: status, the segment metadata the profile requires, and
+either
 (1) a single contiguous span via top-level start_anchor/end_anchor, or
 (2) an ordered segments array where each segment has its own start_anchor and
-end_anchor. Never emit requirement body text. Never paraphrase.
+end_anchor. Never emit body text. Never paraphrase.
 
-MULTI-SPAN REQUIREMENTS (optional, additive):
+IDENTIFIERS:
 
-A requirement MAY consist of multiple disjoint segments listed in document order.
+You do NOT emit identifiers of your own. The engine numbers the items itself,
+in reading order, from the offsets your anchors resolve to; never produce an
+anchor_id, uid, or index.
+
+The identifier an item carries in the source (e.g. the CFR section number, the
+subcategory id) belongs in the segment `metadata` object, under the key the
+extraction profile names (e.g. req_id, subcategory_id), copied verbatim from
+the chunk. Metadata is a verbatim annotation: the engine copies it to the
+output without reading it, so it never affects extraction. The top-level
+`requirement_id` field is DEPRECATED and ignored: omit it.
+
+MULTI-SPAN ITEMS (optional, additive):
+
+An item MAY consist of multiple disjoint segments listed in document order.
 Each segment is itself contiguous: start_anchor begins it, end_anchor ends it.
-Text BETWEEN segments is intentionally EXCLUDED from the requirement.
+Text BETWEEN segments is intentionally EXCLUDED from the item.
 
   segments: [
     {
@@ -26,7 +41,8 @@ Text BETWEEN segments is intentionally EXCLUDED from the requirement.
       "start_anchor": "...",
       "end_anchor": "...",
       "end_before_anchor": null,
-      "start_after_anchor": null
+      "start_after_anchor": null,
+      "metadata": { "req_id": "..." }
     },
     ...
   ]
@@ -34,9 +50,19 @@ Text BETWEEN segments is intentionally EXCLUDED from the requirement.
 Rules for segments:
   - List segments in strict document order.
   - Segments must not overlap and must be strictly increasing in position.
-  - role (optional): "requirement" (default), "questionnaire", or "context".
-    Segments are grouped by role into separate outputs; different roles are NEVER
-    concatenated together.
+  - role (optional): a label defined by the EXTRACTION PROFILE below, which
+    lists the role names allowed for its document family (v0 conventions:
+    "requirement", "questionnaire", "context"). Segments are grouped by role
+    into separate outputs; different roles are NEVER concatenated together.
+    Omit role only when the item has one single role: a missing role is treated
+    as the profile's primary role ("requirement" in v0).
+  - metadata (required when the profile names keys): a JSON object of domain
+    fields for THIS segment, using the keys the profile names (e.g. req_id,
+    subcategory_id, chapter, source). This is where the item's identifier AS
+    PRINTED IN THE SOURCE lives. Every value MUST be copied VERBATIM from text
+    visible in the chunk. Never invent, translate, normalize, or paraphrase a
+    metadata value; omit the key instead of guessing. metadata is not the role,
+    and it is not an engine identifier.
   - start_after_anchor (optional): EXCLUSIVE start — the segment begins immediately
     AFTER the first occurrence of that anchor after the previous segment start;
     the anchor text is NOT included. Symmetric to end_before_anchor. Use when the
@@ -125,7 +151,9 @@ ANCHOR RULES (violating any of these causes the requirement to be rejected):
    segment uses end_before_anchor instead (exclusive stop-before the next heading;
    the heading text is not included).
 
-3. requirement_id MUST appear verbatim in the chunk. Never invent IDs.
+3. Every identifier you report MUST appear verbatim in the chunk. Never invent
+   IDs. Put the source's id in the segment metadata key the profile names (see
+   IDENTIFIERS); the engine numbers the items itself.
 
 4. status:
    - "complete": the requirement's start_anchor is in this chunk and its end is

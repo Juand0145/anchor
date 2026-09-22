@@ -2,7 +2,8 @@
 
 Detection prompts for the core engine. Compose with
 `anchor_extract/prompts/anchor.txt` via `build_anchor_system_prompt`.
-Authoring guide: `docs/profiles.md`.
+Authoring guide: `../../../prompt_instructions.md` (anchors, roles, metadata);
+bundled-profile notes: `docs/profiles.md`.
 
 | Profile | File | Intended document | Unit-boundary regex |
 |---|---|---|---|
@@ -14,6 +15,10 @@ each `§ NNN.NNN` title heading is one chunking unit (Definitions § 160.103 sta
 in one batch; later sections are not packed into the same call merely because
 the remainder fits).
 
-The v0 role enum (`requirement` / `questionnaire` / `context`) is a profile
-convention. AI RMF uses all three; HIPAA typically uses single-span
-`requirement` units.
+Role labels are profile-defined; each profile declares the set it allows. The v0
+conventions are `requirement` / `questionnaire` / `context`, and a segment with
+no role is treated as `requirement` (v0 derives `original_text` from that role).
+AI RMF uses all three; HIPAA uses single-role `requirement` units.
+
+Each profile also names its own segment `metadata` keys — `req_id` for HIPAA,
+`subcategory_id` for AI RMF — whose values are copied verbatim from the chunk.

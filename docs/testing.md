@@ -31,6 +31,12 @@ python scripts/sweep_chunk_budget.py \
   --live --budgets 6000,12000
 ```
 
-Compare `n_calls` / `n_batches` vs `has_160_103` and `missing_section_ids` in
+Compare `n_calls` / `n_batches` vs `has_160_103` and `source_ids` in
 `outputs/batch_sweep_live.json`. Multi-unit batches can still drop later
 sections inside one call; that is an LLM-completeness issue, not a packing bug.
+
+`source_ids` comes from the segment `metadata` of each unit, because the engine
+assigns only a reading-order `anchor_id` and never reads the source's own
+numbering. `tests/test_coverage_ground_truth.py` holds the consumer-side
+helpers (`source_ids`, `coverage_score`, `missing_section_ids`) for scoring a
+run against an expected set of § headings.

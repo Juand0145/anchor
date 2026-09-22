@@ -34,7 +34,9 @@ used in this document map as follows:
 | Concept | v0 code / JSON |
 |---|---|
 | Logical unit | `requirement` / `ExtractedRequirement` |
-| Record id | `requirement_id` |
+| Display id (schema 2.1) | `anchor_id` / `sequence` — 1-based reading order; exported as `requirement_id` |
+| Positional key (schema 2.1) | `span_key` — `generate_span_key`, `{pdf_hash[:12]}:{doc_offset_start}` |
+| Id as printed in the source | segment `metadata` (`req_id`, `subcategory_id`, …) — pass-through, never read by the engine |
 | Extraction profile (detection prompt) | `detection_prompt` argument; composed by `build_anchor_system_prompt` |
 | Profile name in artifacts | `framework_name` / `framework` |
 | Unit-boundary regex | `requirement_boundary_pattern` |
@@ -45,6 +47,19 @@ used in this document map as follows:
 | Run stats | `FrameworkExtractionStats` |
 
 Do not rename these in v0. This table is documentation only.
+
+The model supplies no identifiers: `requirement_id` on the wire is deprecated
+and ignored. The engine assigns exactly two ids. `anchor_id` is the 1-based
+reading-order number of the unit (assigned when its start first resolves,
+reused by a continuation, exported as `requirement_id`); `span_key` is the
+positional `{pdf_hash[:12]}:{doc_offset_start}` for dedup and re-run
+comparison. Cross-chunk stitching keys on position and status alone.
+
+Since schema 2.2 the engine holds no domain identifier at all: `req_id`,
+`subcategory_id` and any other metadata key travel verbatim from the model to
+the artifacts without a single branch on their value. Nothing in the pipeline
+validates them, so identifier coverage is checked against the exported
+`metadata` by consumers (see [testing.md](testing.md)).
 
 ---
 
@@ -170,7 +185,7 @@ Without a pattern it falls back to greedy block packing. See §5.
 
 **[4] Anchor extraction.** Each batch is sent to the LLM with tool-use forcing
 the anchor schema. Per unit the model returns
-`{requirement_id, status}` plus either legacy top-level `start_anchor`/`end_anchor`
+`{status}` plus either legacy top-level `start_anchor`/`end_anchor`
 (single span) or an ordered `segments[]` array, each segment carrying
 `start_anchor`, an inclusive `end_anchor` or exclusive `end_before_anchor`, an
 optional exclusive `start_after_anchor`, and a `role`.
@@ -260,7 +275,8 @@ final stitched output. (v0 name remains `ExtractedRequirement`.)
 
 | Field | Purpose |
 |---|---|
-| `requirement_id` | Id as it appears verbatim in the source |
+| `sequence` / `anchor_id` | 1-based reading-order number and its string form (`requirement_id` is an alias); `0` / `""` when the start never resolved |
+| `span_key` | `{pdf_hash[:12]}:{doc_offset_start}`; `""` when the start never resolved |
 | `start_anchor`, `end_anchor` | First segment start / last segment end anchor (for display/trace); either may be null |
 | `status` | `complete` / `truncated_at_end` / `truncated_at_start` |
 | `original_text` | The `requirement`-role text only. **Never** the model's words. Empty when not resolvable |
@@ -277,7 +293,6 @@ final stitched output. (v0 name remains `ExtractedRequirement`.)
 | `end_resolved` | False ⇒ the end is only a containment bound, not a confirmed terminal end |
 | `end_inferred_from_next_start` | True ⇒ end anchor was null and the stitcher closed at the next resolved start (valid for immediate adjacency; visible for audit) |
 | `end_anchor_unresolved` | True ⇒ the model supplied an `end_anchor` but it did not resolve after the start (end is not anchor-confirmed) |
-| `id_mismatch` | True ⇒ a continuation closed a pending unit whose id differed |
 | `start_via_fallback` | True ⇒ a start resolved via the strict prefix fallback (offset identical to exact match; text unaffected) |
 | `ambiguous` | True ⇒ a start could not be resolved deterministically (text recurs within the ordering window); left unresolved on purpose |
 | `source_chunk_id`, `source_chunk_ids` | Start chunk ordinal, and every chunk that contributed text (`len > 1` ⇒ stitched across chunks) |
@@ -556,7 +571,7 @@ segment offsets (falling back to `[(start, end)]` for single-span):
 5. **Page / bbox.** `doc.locate(bounding start)` maps to the containing block's
    page and bounding box.
 6. **Flags.** `end_resolved`, `end_inferred_from_next_start`,
-   `end_anchor_unresolved`, `id_mismatch`, `start_via_fallback`, `ambiguous`,
+   `end_anchor_unresolved`, `start_via_fallback`, `ambiguous`,
    `n_segments` / `n_segments_resolved` / `segments_partial` make every non-ideal
    or implicit outcome observable.
 
@@ -580,7 +595,9 @@ and `DocumentExtraction.blocks` are enough to reproduce a slice. Body text lives
 only in `requirements.json`.
 
 - **`requirements.json`** — lean deliverable: per unit `uid`,
-  `requirement_id`, `title`, `extracted_text` (= `requirement_text`), the three
+  `requirement_id` (= `anchor_id` = reading-order number), `sequence`,
+  `span_key`, `metadata`,
+  `title`, `extracted_text` (= `requirement_text`), the three
   role texts (`requirement_text`, `questionnaire_text`, `context_text`), `source`
   (doc offset + page range), `anchors` (incl. `segment_anchor_pairs`),
   `segments[]` (each with `doc_offset`, `page_range`, `role`, `resolved`),
@@ -595,7 +612,7 @@ only in `requirements.json`.
   `verbatim_match`, `resolved_via_prefix_fallback`, `ambiguous`).
 
 Both JSON files carry a controlled-vocabulary `warnings` list for triage:
-`start_unresolved`, `end_unresolved`, `id_mismatch`, `empty_text`,
+`start_unresolved`, `end_unresolved`, `empty_text`,
 `ambiguous_anchor`, `resolved_via_prefix_fallback`, `segments_partial`,
 `multi_span`, `spans_multiple_chunks`.
 
@@ -614,7 +631,7 @@ stage. Those writers are not part of this package.
 | **`end_anchor` supplied but unresolved** | `end_anchor_unresolved=True`; the end is treated as unconfirmed (bounded by next-start inference or carried as pending), never trusted as a terminal end. |
 | **Ambiguous / duplicate anchor** | Global forward cursor + the `previous_start < current < next_start` window disambiguate most repeats. If still not unique, the segment is left unresolved and marked `ambiguous` — never guessed. |
 | **Exclusive-boundary segments** | `start_after_anchor` / `end_before_anchor` drop the anchor text from the slice; `end_before_anchor` need not be globally unique (first occurrence after the start within the window). |
-| **Non-contiguous roles** | Multi-span with per-segment `role` captures a later segment that follows excluded context, linked by `requirement_id` (roles never concatenated). |
+| **Non-contiguous roles** | Multi-span with per-segment `role` captures a later segment that follows excluded context, linked by `anchor_id` (roles never concatenated). |
 | **Whitespace / punctuation differences** | Absorbed by whitespace + confusable-punctuation folding (curly quotes/apostrophes, en/em dashes). |
 | **Substituted / dropped word in an anchor** | Exact match fails; prefix (starts) or suffix (ends) fallback recovers it **iff** the surviving prefix/suffix is unique in the window, else flagged `ambiguous`. Never a crash. |
 | **Scrambled PDF reading order** | `_reading_order_blocks` clusters blocks into columns by left edge and reads each top-to-bottom, header/footer bands pulled out. Single-column docs are unaffected. |
@@ -668,8 +685,8 @@ verifiable.
 
 The core engine does not encode a document type. A profile supplies:
 
-- **Detection prompt** — which spans are logical units and how `requirement_id`
-  is formatted.
+- **Detection prompt** — which spans are logical units and how the source's own
+  identifier (`metadata.req_id`) is formatted.
 - **Optional unit-boundary regex** — `requirement_boundary_pattern`.
 - **Role conventions** — how to use the v0 three-value enum for that family.
 
@@ -703,7 +720,7 @@ A Playbook subcategory interleaves the **normative outcome**, **explanatory
 context** ("About", "Suggested Actions"), and a **questionnaire**
 ("Transparency & Documentation" questions). These parts are *non-contiguous* —
 the questionnaire sits after context the profile excludes from the primary
-span — yet they stay linked by `requirement_id`.
+span — yet they stay linked by `anchor_id`.
 
 The AI RMF profile emits **three** role-tagged segments per subcategory:
 

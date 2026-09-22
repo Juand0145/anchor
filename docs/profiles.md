@@ -1,17 +1,24 @@
 # Extraction profiles
 
+> Writing a profile prompt? Start with
+> [prompt_instructions.md](../prompt_instructions.md): anchors, start/end
+> boundary fields, roles, metadata and the authoring checklist. This page covers
+> where profiles live and which ones ship with the repo.
+
 An **extraction profile** tells the core engine *which* logical units to extract
 from a PDF. The engine itself does not know a document type; it only enforces
 the generic anchor contract.
 
 A profile is:
 
-1. A **detection prompt** (required) — what counts as a unit and how
-   `requirement_id` is formatted.
+1. A **detection prompt** (required) — what counts as a unit and how the
+   source's own identifier (`metadata.req_id`) is formatted.
 2. An optional **unit-boundary regex** — v0 parameter
    `requirement_boundary_pattern`; keeps whole units inside one LLM chunk.
-3. **Role conventions** — how to use the v0 role enum
-   (`requirement` / `questionnaire` / `context`) for that document family.
+3. **Role conventions** — the role labels the profile allows for that document
+   family (v0 conventions: `requirement` / `questionnaire` / `context`).
+4. **Segment metadata keys** — the verbatim domain fields each segment carries
+   (`req_id` for HIPAA, `subcategory_id` for AI RMF).
 
 ## Where profiles live
 
@@ -71,10 +78,37 @@ page ranges need this so one call does not swallow many later sections with
 
 ## v0 roles
 
-`ANCHOR_INPUT_SCHEMA` enumerates three roles: `requirement` (default),
-`questionnaire`, `context`. That set is a **v0 profile convention**, not an
-arbitrary user-defined taxonomy. Additional roles are future work; do not
-emit values outside the enum.
+Role labels are **profile-defined**: each profile declares the set it allows for
+its document family. `requirement`, `questionnaire` and `context` are the v0
+conventions, and `original_text` is the `requirement`-role text only. The engine
+keeps any non-empty label as emitted; a segment with no usable role is treated
+as `requirement`.
+
+Each segment may also carry a `metadata` object with the profile's domain keys
+(`req_id`, `subcategory_id`, …), copied verbatim from the chunk.
+
+## Identifiers: `anchor_id`, `span_key`, and metadata
+
+The engine assigns two ids and interprets neither the model's nor the source's:
+
+| Field | Value | Use |
+|---|---|---|
+| `anchor_id` (also exported as `requirement_id`) | `"1"`, `"2"`, `"3"`, … in reading order | Display and cross-referencing |
+| `span_key` | `{pdf_hash[:12]}:{doc_offset_start}` | Dedup and re-run comparison |
+| `metadata.req_id`, `metadata.subcategory_id`, … | Verbatim from the source | Coverage checks against the source's own numbering |
+
+A unit whose start never resolved gets no reading-order number: `sequence` is
+`0` and both `anchor_id` and `requirement_id` are empty, so display ids stay
+contiguous over real units. The top-level `requirement_id` on the wire is
+deprecated and ignored.
+
+`requirements.json` and `extraction_run.json` are `schema_version` `2.2`: units
+carry `sequence`, `span_key` and `metadata`, `requirement_id` is the
+reading-order number, and `segment_anchor_pairs` entries are objects rather than
+5-element lists. There is no `business_id` and no identifier validation: since
+the engine never reads `req_id`, a wrong one is invisible to it, so checking the
+source's numbering is the consumer's job (see
+[docs/testing.md](testing.md)).
 
 A profile may use only `requirement` (single-span units, as in HIPAA) or all
 three (non-contiguous units, as in the AI RMF Playbook). Different roles are
@@ -86,8 +120,8 @@ A good detection prompt:
 
 - States what **is** a logical unit and what to skip (front matter, headings-only
   pages, references, noise).
-- Defines `requirement_id` as a **verbatim** substring of the source; never
-  invent ids.
+- Defines the metadata identifier (`req_id`, `subcategory_id`) as a **verbatim**
+  substring of the source; never invent ids.
 - Does **not** ask the model to return body text, offsets, or page numbers.
 - Uses `segments[]` when a unit is non-contiguous; tags each segment with a
   v0 `role`.

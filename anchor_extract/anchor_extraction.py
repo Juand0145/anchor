@@ -47,9 +47,47 @@ ROLE_CONTEXT = "context"
 VALID_SEGMENT_ROLES = frozenset({ROLE_REQUIREMENT, ROLE_QUESTIONNAIRE, ROLE_CONTEXT})
 
 
+def generate_span_key(doc: Optional[DocumentExtraction], doc_offset_start: int) -> str:
+    """Technical positional key for a resolved span start.
+
+    Deterministic and stable for the same document hash and start offset:
+    ``{pdf_hash[:12]}:{doc_offset_start}``. Used for dedup and re-run
+    comparison, never for display. Empty string when the start is unresolved,
+    so an unresolved unit never carries a fabricated key.
+    """
+    if doc is None or doc_offset_start is None or doc_offset_start < 0:
+        return ""
+    return f"{doc.pdf_hash[:12]}:{doc_offset_start}"
+
+
+# Deprecated v2.0 name: ``anchor_id`` is now the 1-based reading-order sequence.
+generate_anchor_id = generate_span_key
+
+
+class _Sequencer:
+    """1-based reading-order counter for logical units.
+
+    One number per logical unit, assigned when its start first resolves. A
+    continuation reuses the sequence of the pending it closes.
+    """
+
+    def __init__(self, start: int = 1):
+        self.next = start
+
+    def assign(self) -> int:
+        seq = self.next
+        self.next += 1
+        return seq
+
+
 def _normalize_role(role: Optional[str]) -> str:
-    if role in VALID_SEGMENT_ROLES:
-        return role
+    """Roles are profile-defined: any non-empty label is kept as emitted.
+
+    A missing or unusable value falls back to ``ROLE_REQUIREMENT`` because v0
+    derives ``original_text`` from the ``requirement`` role.
+    """
+    if isinstance(role, str) and role.strip():
+        return role.strip()
     return ROLE_REQUIREMENT
 
 
@@ -61,6 +99,9 @@ class SegmentSpec:
     end_before_anchor: Optional[str] = None
     role: str = ROLE_REQUIREMENT
     start_after_anchor: Optional[str] = None
+    # Verbatim domain fields emitted by the model, passed through to the JSON
+    # artifacts. Opaque to the engine: no code branches on their keys.
+    metadata: Optional[dict] = None
 
     def to_list(self) -> list:
         return [
@@ -94,7 +135,7 @@ def _coerce_resolved_segment(seg) -> ResolvedSegment:
 # --------------------------------------------------------------------------- #
 # Tool-use schema: anchors only. Public keys are requirement-centric (v0).
 # Profile detection rules live in the system prompt composed by
-# build_anchor_system_prompt. Role enum is fixed to three values.
+# build_anchor_system_prompt. Role labels are profile-defined.
 # --------------------------------------------------------------------------- #
 ANCHOR_TOOL_NAME = "emit_requirement_anchors"
 
@@ -109,7 +150,7 @@ ANCHOR_INPUT_SCHEMA = {
                 "properties": {
                     "requirement_id": {
                         "type": "string",
-                        "description": "Identifier of the requirement as it appears verbatim in the chunk (e.g. '5.8', '164.312')."
+                        "description": "DEPRECATED legacy field, optional and ignored. The identifier of the unit in the source (e.g. req_id, subcategory_id) belongs in the segment 'metadata' object under the key the extraction profile names. The engine assigns its own ids from the resolved anchors: never emit one."
                     },
                     "start_anchor": {
                         "type": ["string", "null"],
@@ -139,8 +180,11 @@ ANCHOR_INPUT_SCHEMA = {
                                 },
                                 "role": {
                                     "type": "string",
-                                    "enum": ["requirement", "questionnaire", "context"],
-                                    "description": "Segment role. Default 'requirement'. Segments are grouped by role into separate outputs; different roles are never concatenated."
+                                    "description": "Segment role label, defined by the extraction profile (v0 conventions: 'requirement', 'questionnaire', 'context'). Segments are grouped by role into separate outputs; different roles are never concatenated. Omit it only for a single-role span: a missing role is treated as 'requirement'."
+                                },
+                                "metadata": {
+                                    "type": "object",
+                                    "description": "Domain fields for this segment (e.g. req_id, subcategory_id, chapter, source), as named by the extraction profile. These are opaque annotations: they are copied to the output artifacts for downstream tools and never drive extraction, stitching, or the engine's ids. Every value MUST be copied VERBATIM from text visible in the chunk; never invent, normalize, translate, or paraphrase a value. Omit a key instead of guessing. This is not the role."
                                 },
                                 "start_after_anchor": {
                                     "type": ["string", "null"],
@@ -156,7 +200,7 @@ ANCHOR_INPUT_SCHEMA = {
                         "description": "'complete': start is in this chunk and the end is determinable here, either via an explicit end_anchor or immediate adjacency where the next requirement starts exactly at this requirement's end. 'truncated_at_end': ONLY valid for the LAST requirement in the chunk -- it starts here but its body runs past the chunk/document boundary with no visible terminal text (end_anchor null); the next chunk continues it. A middle requirement is complete, not truncated_at_end. 'truncated_at_start': began in a previous chunk (start_anchor null); set end_anchor if it ends in this chunk."
                     }
                 },
-                "required": ["requirement_id", "start_anchor", "end_anchor", "status"]
+                "required": ["start_anchor", "end_anchor", "status"]
             }
         }
     },
@@ -230,8 +274,19 @@ class ExtractedRequirement:
     ``doc_offset_start``/``doc_offset_end`` are the BOUNDING span (first segment
     start through last segment end). When ``n_segments > 1`` they are NOT a clean
     slice of ``original_text``.
+
+    Two engine identifiers, neither model-supplied:
+
+    * ``sequence`` / ``anchor_id`` -- 1-based reading-order number assigned by
+      the stitcher; ``anchor_id`` is its string form and the display id.
+      ``sequence`` is 0 (``anchor_id`` empty) when the start never resolved.
+    * ``span_key`` -- technical positional key from ``generate_span_key``, for
+      dedup and re-run comparison.
+
+    Domain identifiers (CFR section, subcategory id) are NOT engine state: they
+    live in the segment ``metadata`` carried by ``segment_anchor_pairs`` and
+    reach the artifacts untouched.
     """
-    requirement_id: str
     original_text: str
     start_anchor: Optional[str]
     end_anchor: Optional[str]
@@ -251,6 +306,12 @@ class ExtractedRequirement:
     # Physical location of the requirement start (None if not resolved)
     page: Optional[int]
     bbox: Optional[tuple]
+
+    # Engine-assigned ids. ``sequence`` is reading-order (1..N); ``span_key`` is
+    # positional ("{pdf_hash[:12]}:{doc_offset_start}"). Both are empty/0 when
+    # the start never resolved.
+    sequence: int = 0
+    span_key: str = ""
 
     # Resolved segment offsets (document coordinates after stitching; chunk-local
     # before). Provenance source of truth for multi-span requirements.
@@ -272,11 +333,9 @@ class ExtractedRequirement:
     #                         did not resolve after the start, so the end is not
     #                         anchor-confirmed (bounded by next-start inference
     #                         or carried as pending).
-    #   id_mismatch=True   -> a continuation closed a pending requirement whose id differed.
     end_resolved: bool = True
     end_inferred_from_next_start: bool = False
     end_anchor_unresolved: bool = False
-    id_mismatch: bool = False
 
     # True when the start_anchor did not match exactly and was resolved by the
     # strict unique-prefix fallback (see _find_anchor_unique_prefix). Recorded
@@ -298,6 +357,16 @@ class ExtractedRequirement:
     requirement_text: str = ""
     questionnaire_text: str = ""
     context_text: str = ""
+
+    @property
+    def anchor_id(self) -> str:
+        """Display id: the reading-order sequence as a string ('' if unresolved)."""
+        return str(self.sequence) if self.sequence > 0 else ""
+
+    @property
+    def requirement_id(self) -> str:
+        """v0 alias of ``anchor_id``; matches ``requirement_id`` in the JSON."""
+        return self.anchor_id
 
 
 @dataclass
@@ -339,8 +408,6 @@ class ExtractionResult:
     raw_payload: dict = field(default_factory=dict)
     malformed_items: list = field(default_factory=list)
     attempts: list = field(default_factory=list)
-    # Section headings found in the chunk but absent from raw requirement_ids.
-    missing_section_ids: list = field(default_factory=list)
 
 
 def _derive_batch_status(requirements: list, malformed: list, stop_reason: str = "") -> str:
@@ -563,6 +630,7 @@ def _normalize_model_segments(raw: dict) -> tuple:
                 end_before_anchor=seg.get("end_before_anchor"),
                 role=_normalize_role(seg.get("role")),
                 start_after_anchor=seg.get("start_after_anchor"),
+                metadata=seg.get("metadata") if isinstance(seg.get("metadata"), dict) else None,
             ))
         return specs, None
     sa = raw.get("start_anchor")
@@ -868,7 +936,7 @@ def _build_chunk_requirement_from_segments(
         bbox = loc.get("bbox")
 
     return ExtractedRequirement(
-        requirement_id=raw.get("requirement_id", ""),
+        span_key=generate_span_key(doc, doc_start),
         original_text=original_text,
         requirement_text=requirement_text,
         questionnaire_text=questionnaire_text,
@@ -908,7 +976,6 @@ def extract_requirements_from_chunk(
     temperature: float = 0.0,
     max_retries: int = 3,
     retry_wait_s: int = 10,
-    section_boundary_pattern: Optional[str] = None,
 ) -> ExtractionResult:
     """Locate requirement boundaries in a chunk via LLM tool-use, then
     resolve each anchor to chunk-local offsets (whitespace-tolerant).
@@ -958,7 +1025,11 @@ def extract_requirements_from_chunk(
     for r in dict_items:
         pairs, reason = _normalize_model_segments(r)
         if reason:
-            malformed.append({"reason": reason, "requirement_id": r.get("requirement_id"), "value": r})
+            malformed.append({
+                "reason": reason,
+                "requirement_id": r.get("requirement_id"),
+                "value": r,
+            })
             normalized_segments.append([])
             valid_dict_items.append(r)
         else:
@@ -982,9 +1053,6 @@ def extract_requirements_from_chunk(
         CallAttempt(a.model, a.attempt_no, a.duration_s, a.outcome, a.error_message)
         for a in llm_result.attempts
     ]
-    missing_section_ids = _audit_missing_section_ids(
-        chunk_text, raw_requirements, section_boundary_pattern,
-    )
     return ExtractionResult(
         requirements=validated,
         model_used=llm_result.model_used,
@@ -1000,7 +1068,6 @@ def extract_requirements_from_chunk(
         raw_payload=payload,
         malformed_items=malformed,
         attempts=attempts,
-        missing_section_ids=missing_section_ids,
     )
 
 
@@ -1147,29 +1214,6 @@ def _find_section_heading_ids(text: str, pattern: str) -> list:
     return found
 
 
-def _audit_missing_section_ids(
-    chunk_text: str,
-    raw_requirements,
-    pattern: Optional[str],
-) -> list:
-    """Headings in the chunk minus raw ``requirement_id`` values (exact).
-
-    Compared against dict items before resolution filtering. Sub-paragraph
-    ids (e.g. 160.308(a)(1)) do not cover a section heading 160.308.
-    """
-    if not pattern:
-        return []
-    headings = _find_section_heading_ids(chunk_text, pattern)
-    emitted: set = set()
-    for r in raw_requirements or []:
-        if not isinstance(r, dict):
-            continue
-        rid = r.get("requirement_id")
-        if isinstance(rid, str) and rid.strip():
-            emitted.add(rid.strip())
-    return [h for h in headings if h not in emitted]
-
-
 def _build_batch(
     doc: DocumentExtraction,
     start_block_idx: int,
@@ -1280,9 +1324,12 @@ class PendingRequirement:
     offsets collected so far and ``segment_anchor_pairs`` holds the full model
     spec (including unresolved segments). Only one open multi-span pending is
     supported at a time."""
-    requirement_id: str
     start: int
     start_anchor: Optional[str]
+    # Engine ids assigned when the pending was opened; survive the carry-forward
+    # so a continuation keeps the same reading-order number.
+    sequence: int = 0
+    span_key: str = ""
     start_chunk_id: int = -1
     chunk_ids: list = field(default_factory=list)
     end_anchor_unresolved: bool = False
@@ -1306,12 +1353,10 @@ class RangeExtraction:
 
 def _finalize_requirement(
     doc: DocumentExtraction,
-    requirement_id: str,
     start_off: int,
     end_off: int,
     status: str,
     end_resolved: bool,
-    id_mismatch: bool,
     start_anchor: Optional[str],
     end_anchor: Optional[str],
     source_chunk_id: int = -1,
@@ -1324,11 +1369,17 @@ def _finalize_requirement(
     segment_anchor_pairs: Optional[list] = None,
     start_via_fallback: bool = False,
     ambiguous: bool = False,
+    sequence: int = 0,
+    span_key: str = "",
 ) -> ExtractedRequirement:
     """Build a document-level requirement from resolved segment offsets.
 
     When ``segment_offsets`` is omitted, falls back to ``[(start_off, end_off)]``
     for backward-compatible single-span finalization.
+
+    ``sequence`` is the caller-assigned reading-order number (a continuation
+    passes the pending's number). ``span_key`` is derived from the resolved
+    start when not supplied.
     """
     if segment_offsets is None:
         if start_off >= 0 and end_off > start_off:
@@ -1376,7 +1427,8 @@ def _finalize_requirement(
         )
 
     return ExtractedRequirement(
-        requirement_id=requirement_id,
+        sequence=sequence,
+        span_key=span_key or generate_span_key(doc, bound_start),
         original_text=original_text,
         requirement_text=requirement_text,
         questionnaire_text=questionnaire_text,
@@ -1399,7 +1451,6 @@ def _finalize_requirement(
         end_resolved=end_resolved,
         end_inferred_from_next_start=end_inferred_from_next_start,
         end_anchor_unresolved=end_anchor_unresolved,
-        id_mismatch=id_mismatch,
         start_via_fallback=start_via_fallback,
         ambiguous=ambiguous,
         source_chunk_id=source_chunk_id,
@@ -1432,8 +1483,8 @@ def _finalize_from_chunk_requirement(
     end_resolved: Optional[bool] = None,
     end_inferred_from_next_start: bool = False,
     end_anchor_unresolved: Optional[bool] = None,
-    id_mismatch: bool = False,
     status: Optional[str] = None,
+    sequence: int = 0,
 ) -> ExtractedRequirement:
     """Finalize a chunk-local requirement (single- or multi-span) at document level."""
     doc_segments = _doc_segments_from_chunk_req(r, batch_offset_start)
@@ -1443,12 +1494,10 @@ def _finalize_from_chunk_requirement(
         end_anchor_unresolved = r.end_anchor_unresolved
     return _finalize_requirement(
         doc,
-        r.requirement_id,
         r.doc_offset_start,
         r.doc_offset_end,
         status or r.status or "complete",
         end_resolved,
-        id_mismatch,
         r.start_anchor,
         r.end_anchor,
         source_chunk_id=chunk_id,
@@ -1461,6 +1510,8 @@ def _finalize_from_chunk_requirement(
         segment_anchor_pairs=r.segment_anchor_pairs,
         start_via_fallback=r.start_via_fallback,
         ambiguous=r.ambiguous,
+        sequence=sequence,
+        span_key=getattr(r, "span_key", ""),
     )
 
 
@@ -1472,6 +1523,7 @@ def _stitch_chunk(
     final: list,
     range_end_offset: int,
     chunk_id: int = -1,
+    sequencer: Optional[_Sequencer] = None,
 ) -> Optional[PendingRequirement]:
     """Fold one chunk's chunk-local requirements into the linear ``final`` list,
     threading the single open ``pending`` requirement across chunk boundaries.
@@ -1497,6 +1549,11 @@ def _stitch_chunk(
     def closed_chunks(p: PendingRequirement) -> list:
         return sorted(set(p.chunk_ids + [chunk_id]))
 
+    # Reading-order numbering: a new number per logical unit whose start
+    # resolves here; a continuation reuses the pending's number.
+    if sequencer is None:
+        sequencer = _Sequencer()
+
     n = len(reqs)
     for j, r in enumerate(reqs):
         is_last = (j == n - 1)
@@ -1505,13 +1562,13 @@ def _stitch_chunk(
 
         # --- Close, carry, or break an open pending requirement ---
         if pending is not None:
+            # Continuation is decided by position and status alone; the engine
+            # holds no domain id to compare against.
             is_continuation = (
                 r.status == "truncated_at_start"
                 or not has_start
-                or r.requirement_id == pending.requirement_id
             )
             if is_continuation and has_end and r.doc_offset_end > pending.start:
-                id_mismatch = bool(r.requirement_id) and r.requirement_id != pending.requirement_id
                 if pending.n_segments > 1 or pending.segments:
                     merged = list(pending.segments)
                     merged.extend(_doc_segments_from_chunk_req(r, batch_offset_start))
@@ -1519,8 +1576,8 @@ def _stitch_chunk(
                     partial = pending.segments_partial or overlap_partial or r.segments_partial
                     all_done = len(merged) >= pending.n_segments and not partial
                     final.append(_finalize_requirement(
-                        doc, pending.requirement_id, pending.start, r.doc_offset_end,
-                        "complete", all_done, id_mismatch, pending.start_anchor, r.end_anchor,
+                        doc, pending.start, r.doc_offset_end,
+                        "complete", all_done, pending.start_anchor, r.end_anchor,
                         source_chunk_id=pending.start_chunk_id,
                         source_chunk_ids=closed_chunks(pending),
                         segment_offsets=merged,
@@ -1528,14 +1585,19 @@ def _stitch_chunk(
                         segments_partial=partial,
                         segment_anchor_pairs=pending.segment_anchor_pairs,
                         end_anchor_unresolved=pending.end_anchor_unresolved or r.end_anchor_unresolved,
+                        sequence=pending.sequence,
+                        span_key=pending.span_key,
                     ))
                 else:
                     final.append(_finalize_requirement(
-                        doc, pending.requirement_id, pending.start, r.doc_offset_end,
-                        "complete", True, id_mismatch, pending.start_anchor, r.end_anchor,
+                        doc, pending.start, r.doc_offset_end,
+                        "complete", True, pending.start_anchor, r.end_anchor,
                         source_chunk_id=pending.start_chunk_id,
                         source_chunk_ids=closed_chunks(pending),
+                        segment_anchor_pairs=pending.segment_anchor_pairs,
                         end_anchor_unresolved=pending.end_anchor_unresolved,
+                        sequence=pending.sequence,
+                        span_key=pending.span_key,
                     ))
                 pending = None
                 continue
@@ -1559,8 +1621,8 @@ def _stitch_chunk(
                     doc_start = pending.start
                     doc_end = pending.start
                 final.append(_finalize_requirement(
-                    doc, pending.requirement_id, doc_start, doc_end,
-                    "truncated_at_end", False, False, pending.start_anchor, pending.end_anchor,
+                    doc, doc_start, doc_end,
+                    "truncated_at_end", False, pending.start_anchor, pending.end_anchor,
                     source_chunk_id=pending.start_chunk_id,
                     source_chunk_ids=closed_chunks(pending),
                     end_anchor_unresolved=pending.end_anchor_unresolved,
@@ -1568,6 +1630,8 @@ def _stitch_chunk(
                     n_segments_expected=pending.n_segments,
                     segments_partial=True,
                     segment_anchor_pairs=pending.segment_anchor_pairs,
+                    sequence=pending.sequence,
+                    span_key=pending.span_key,
                 ))
             elif pending.segments:
                 segs = [_coerce_resolved_segment(s) for s in pending.segments]
@@ -1577,8 +1641,8 @@ def _stitch_chunk(
                 elif pending.start >= 0 and bound > pending.start:
                     segs = [ResolvedSegment(pending.start, bound, ROLE_REQUIREMENT)]
                 final.append(_finalize_requirement(
-                    doc, pending.requirement_id, pending.start, bound,
-                    "truncated_at_end", False, False, pending.start_anchor, pending.end_anchor,
+                    doc, pending.start, bound,
+                    "truncated_at_end", False, pending.start_anchor, pending.end_anchor,
                     source_chunk_id=pending.start_chunk_id,
                     source_chunk_ids=closed_chunks(pending),
                     end_anchor_unresolved=pending.end_anchor_unresolved,
@@ -1586,14 +1650,19 @@ def _stitch_chunk(
                     n_segments_expected=pending.n_segments,
                     segments_partial=True,
                     segment_anchor_pairs=pending.segment_anchor_pairs,
+                    sequence=pending.sequence,
+                    span_key=pending.span_key,
                 ))
             else:
                 final.append(_finalize_requirement(
-                    doc, pending.requirement_id, pending.start, bound,
-                    "truncated_at_end", False, False, pending.start_anchor, None,
+                    doc, pending.start, bound,
+                    "truncated_at_end", False, pending.start_anchor, None,
                     source_chunk_id=pending.start_chunk_id,
                     source_chunk_ids=closed_chunks(pending),
+                    segment_anchor_pairs=pending.segment_anchor_pairs,
                     end_anchor_unresolved=pending.end_anchor_unresolved,
+                    sequence=pending.sequence,
+                    span_key=pending.span_key,
                 ))
             pending = None
 
@@ -1601,9 +1670,10 @@ def _stitch_chunk(
         if is_last and r.status == "truncated_at_end" and has_start:
             doc_segs = _doc_segments_from_chunk_req(r, batch_offset_start)
             pending = PendingRequirement(
-                requirement_id=r.requirement_id,
                 start=r.doc_offset_start,
                 start_anchor=r.start_anchor,
+                sequence=sequencer.assign(),
+                span_key=getattr(r, "span_key", "") or generate_span_key(doc, r.doc_offset_start),
                 start_chunk_id=chunk_id,
                 chunk_ids=[chunk_id],
                 end_anchor_unresolved=(bool(r.end_anchor) and not has_end) or r.end_anchor_unresolved,
@@ -1620,9 +1690,11 @@ def _stitch_chunk(
             start = batch_offset_start
             end = r.doc_offset_end if (has_end and r.doc_offset_end > start) else -1
             final.append(_finalize_requirement(
-                doc, r.requirement_id, start, end,
-                "truncated_at_start", bool(end >= 0), False, None, r.end_anchor,
+                doc, start, end,
+                "truncated_at_start", bool(end >= 0), None, r.end_anchor,
                 source_chunk_id=chunk_id,
+                segment_anchor_pairs=r.segment_anchor_pairs,
+                sequence=sequencer.assign(),
             ))
             continue
 
@@ -1632,26 +1704,32 @@ def _stitch_chunk(
                 if r.n_segments_resolved == r.n_segments and not r.segments_partial:
                     final.append(_finalize_from_chunk_requirement(
                         doc, r, batch_offset_start, chunk_id,
+                        sequence=sequencer.assign(),
                     ))
                     continue
                 if not (is_last and r.status == "truncated_at_end"):
                     final.append(_finalize_from_chunk_requirement(
                         doc, r, batch_offset_start, chunk_id, end_resolved=False,
+                        sequence=sequencer.assign(),
                     ))
                     continue
             elif r.segments and not r.segments_partial:
                 final.append(_finalize_from_chunk_requirement(
                     doc, r, batch_offset_start, chunk_id,
+                    sequence=sequencer.assign(),
                 ))
                 continue
             final.append(_finalize_requirement(
-                doc, r.requirement_id, r.doc_offset_start, r.doc_offset_end,
-                "complete", True, False, r.start_anchor, r.end_anchor,
+                doc, r.doc_offset_start, r.doc_offset_end,
+                "complete", True, r.start_anchor, r.end_anchor,
                 source_chunk_id=chunk_id,
                 segment_offsets=[ResolvedSegment(
                     r.doc_offset_start, r.doc_offset_end, ROLE_REQUIREMENT,
                 )],
                 n_segments_expected=1,
+                segment_anchor_pairs=r.segment_anchor_pairs,
+                sequence=sequencer.assign(),
+                span_key=getattr(r, "span_key", ""),
             ))
             continue
 
@@ -1675,8 +1753,8 @@ def _stitch_chunk(
                     doc_segs = [ResolvedSegment(r.doc_offset_start, next_start, ROLE_REQUIREMENT)]
                 if end_anchor_supplied_but_unresolved:
                     final.append(_finalize_requirement(
-                        doc, r.requirement_id, r.doc_offset_start, next_start,
-                        r.status or "complete", False, False, r.start_anchor, r.end_anchor,
+                        doc, r.doc_offset_start, next_start,
+                        r.status or "complete", False, r.start_anchor, r.end_anchor,
                         source_chunk_id=chunk_id,
                         end_inferred_from_next_start=True,
                         end_anchor_unresolved=True,
@@ -1684,23 +1762,28 @@ def _stitch_chunk(
                         n_segments_expected=r.n_segments,
                         segments_partial=True,
                         segment_anchor_pairs=r.segment_anchor_pairs,
+                        sequence=sequencer.assign(),
+                        span_key=getattr(r, "span_key", ""),
                     ))
                 else:
                     final.append(_finalize_requirement(
-                        doc, r.requirement_id, r.doc_offset_start, next_start,
-                        r.status or "complete", True, False, r.start_anchor, r.end_anchor,
+                        doc, r.doc_offset_start, next_start,
+                        r.status or "complete", True, r.start_anchor, r.end_anchor,
                         source_chunk_id=chunk_id,
                         end_inferred_from_next_start=True,
                         end_anchor_unresolved=False,
                         segment_offsets=doc_segs,
                         n_segments_expected=r.n_segments,
                         segment_anchor_pairs=r.segment_anchor_pairs,
+                        sequence=sequencer.assign(),
+                        span_key=getattr(r, "span_key", ""),
                     ))
                 continue
             pending = PendingRequirement(
-                requirement_id=r.requirement_id,
                 start=r.doc_offset_start,
                 start_anchor=r.start_anchor,
+                sequence=sequencer.assign(),
+                span_key=getattr(r, "span_key", "") or generate_span_key(doc, r.doc_offset_start),
                 start_chunk_id=chunk_id,
                 chunk_ids=[chunk_id],
                 end_anchor_unresolved=end_anchor_supplied_but_unresolved,
@@ -1713,10 +1796,14 @@ def _stitch_chunk(
             continue
 
         # --- Neither bound resolved: emit flagged and empty for triage. ---
+        # Start never resolved: no reading-order number is assigned (sequence 0,
+        # anchor_id ""), so display ids stay contiguous over real units.
         final.append(_finalize_requirement(
-            doc, r.requirement_id, r.doc_offset_start, r.doc_offset_end,
-            r.status or "complete", False, False, r.start_anchor, r.end_anchor,
+            doc, r.doc_offset_start, r.doc_offset_end,
+            r.status or "complete", False, r.start_anchor, r.end_anchor,
             source_chunk_id=chunk_id,
+            segment_anchor_pairs=r.segment_anchor_pairs,
+            span_key=getattr(r, "span_key", ""),
         ))
     return pending
 
@@ -1794,6 +1881,8 @@ def extract_requirements_for_range(
     pending: Optional[PendingRequirement] = None
     results: list = []
     requirements: list = []
+    # Reading-order display ids: 1, 2, 3, ... across the whole range.
+    sequencer = _Sequencer()
 
     if verbose:
         ctx = _model_context_window(model)
@@ -1833,7 +1922,6 @@ def extract_requirements_for_range(
                 model=model,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                section_boundary_pattern=requirement_boundary_pattern,
             )
         except Exception as exc:
             result = _failed_batch_result(exc, batch_text, first_idx, last_idx,
@@ -1861,9 +1949,7 @@ def extract_requirements_for_range(
             mf = len(result.malformed_items)
             print(f"{len(result.requirements)} reqs ({ok} ok, {tr} trunc) | "
                   f"stop={result.stop_reason} | {result.response_time_s}s"
-                  + (f" | malformed={mf}" if mf else "")
-                  + (f" | missing_section={result.missing_section_ids}"
-                     if result.missing_section_ids else ""))
+                  + (f" | malformed={mf}" if mf else ""))
 
         # CASE 1: output overflow -> shrink batch and retry same starting block.
         # With boundary-aware chunking, shrinking cannot split a unit; after
@@ -1900,7 +1986,7 @@ def extract_requirements_for_range(
         # id used in extraction_run.json), so requirements link back to their call.
         pending = _stitch_chunk(doc, result.requirements, batch_offset_start,
                                 pending, requirements, range_end_offset,
-                                chunk_id=len(results))
+                                chunk_id=len(results), sequencer=sequencer)
         if verbose:
             state = "pending OPEN" if pending is not None else "no pending"
             print(f"  -> stitched {len(requirements) - before} requirement(s) | {state}")
@@ -1914,11 +2000,12 @@ def extract_requirements_for_range(
     # Flush a requirement still open at range end (bounded + flagged).
     if pending is not None:
         if verbose:
-            print(f"  ! range ended with {pending.requirement_id!r} still open; "
+            print(f"  ! range ended with unit #{pending.sequence} "
+                  f"({pending.span_key}) still open; "
                   f"emitting bounded (end_resolved=False)")
         requirements.append(_finalize_requirement(
-            doc, pending.requirement_id, pending.start, range_end_offset,
-            "truncated_at_end", False, False, pending.start_anchor, pending.end_anchor,
+            doc, pending.start, range_end_offset,
+            "truncated_at_end", False, pending.start_anchor, pending.end_anchor,
             source_chunk_id=pending.start_chunk_id,
             source_chunk_ids=sorted(set(pending.chunk_ids)),
             end_anchor_unresolved=pending.end_anchor_unresolved,
@@ -1931,6 +2018,8 @@ def extract_requirements_for_range(
             n_segments_expected=pending.n_segments,
             segments_partial=True,
             segment_anchor_pairs=pending.segment_anchor_pairs,
+            sequence=pending.sequence,
+            span_key=pending.span_key,
         ))
         pending = None
 
@@ -1973,11 +2062,9 @@ class FrameworkExtractionStats:
     # Output quality (counted from the stitched, document-level requirements)
     n_requirements_total: int
     n_flagged_requirements: int        # end not anchor-confirmed (end_resolved=False)
-    n_id_mismatches: int
 
     # Per-batch explicit status counts (ok / empty / verbatim_failure / json_error / api_error)
     status_counts: dict = field(default_factory=dict)
-    n_missing_section_ids: int = 0
 
     def print_summary(self) -> None:
         print(f"=== Framework: {self.framework or '<unset>'} ===")
@@ -1994,7 +2081,6 @@ class FrameworkExtractionStats:
         print(f"  cache creation/read:     {self.total_cache_creation_tokens} / {self.total_cache_read_tokens}")
         print(f"  requirements (stitched): {self.n_requirements_total}")
         print(f"    flagged (no end):      {self.n_flagged_requirements}")
-        print(f"    id mismatches:         {self.n_id_mismatches}")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -2046,11 +2132,7 @@ def summarize_extractions(extraction, framework: str = "") -> FrameworkExtractio
         total_cache_read_tokens=sum(r.cache_read_tokens for r in results),
         n_requirements_total=len(requirements),
         n_flagged_requirements=sum(1 for r in requirements if not r.end_resolved),
-        n_id_mismatches=sum(1 for r in requirements if getattr(r, "id_mismatch", False)),
         status_counts=dict(status_counts),
-        n_missing_section_ids=sum(
-            len(getattr(r, "missing_section_ids", None) or []) for r in results
-        ),
     )
 
 

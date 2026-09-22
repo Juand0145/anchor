@@ -120,6 +120,25 @@ def main(argv=None) -> int:
     return 0
 
 
+def _source_ids(requirements) -> list:
+    """Identifiers as printed in the source, read from segment metadata.
+
+    Consumer-side read for reporting only: the engine never interprets these
+    keys, so coverage checks live here rather than in the pipeline.
+    """
+    ids = []
+    for r in requirements:
+        for spec in getattr(r, "segment_anchor_pairs", []) or []:
+            meta = getattr(spec, "metadata", None)
+            if not isinstance(meta, dict):
+                continue
+            value = meta.get("req_id") or meta.get("subcategory_id")
+            if isinstance(value, str) and value.strip():
+                ids.append(value.strip())
+                break
+    return ids
+
+
 def _run_live(args, doc, pattern, budgets) -> int:
     from anchor_extract import extract_document
 
@@ -141,10 +160,7 @@ def _run_live(args, doc, pattern, budgets) -> int:
             target_input_tokens=budget,
             verbose=False,
         )
-        ids = [r.requirement_id for r in extraction.requirements]
-        missing = []
-        for res in extraction.results:
-            missing.extend(getattr(res, "missing_section_ids", None) or [])
+        ids = _source_ids(extraction.requirements)
         n_in = sum(res.input_tokens for res in extraction.results)
         n_out = sum(res.output_tokens for res in extraction.results)
         run = {
@@ -152,15 +168,13 @@ def _run_live(args, doc, pattern, budgets) -> int:
             "n_calls": len(extraction.results),
             "sum_input_tokens": n_in,
             "sum_output_tokens": n_out,
-            "requirement_ids": ids,
-            "missing_section_ids": sorted(set(missing)),
+            "source_ids": ids,
             "has_160_103": any(i == "160.103" or str(i).startswith("160.103") for i in ids),
         }
         payload["runs"].append(run)
         print(
             f"budget={budget} n_calls={run['n_calls']} "
-            f"in={n_in} out={n_out} has_160.103={run['has_160_103']} "
-            f"missing={run['missing_section_ids']}"
+            f"in={n_in} out={n_out} has_160.103={run['has_160_103']}"
         )
     out = Path(args.out or ROOT / "outputs" / "batch_sweep_live.json")
     out.parent.mkdir(parents=True, exist_ok=True)

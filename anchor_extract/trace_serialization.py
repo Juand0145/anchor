@@ -20,6 +20,38 @@ ID model:
     chunk_id           = 1-based ordinal of the chunk in RangeExtraction.results
     extraction_call_id = "<run_id>#c<chunk_id>"
     requirement uid    = "<run_id>#r<NNNN>"
+    anchor_id          = "1", "2", "3", ...  (1-based reading order)
+    span_key           = "<pdf_hash[:12]>:<doc_offset_start>"  (positional key)
+
+Schema 2.0 breaking changes vs 1.0:
+
+* Every unit carries ``anchor_id`` (engine-assigned). ``requirement_id`` no
+  longer holds a model-supplied value.
+* ``segment_anchor_pairs`` entries changed from a 5-element list to an object
+  ``{start_anchor, end_anchor, end_before_anchor, role, start_after_anchor,
+  metadata}``.
+* Segment ``metadata`` is exported: per unit (from the first segment that has
+  it) and per entry in ``segments[]`` when the spec and resolved lists align.
+* New warning keys: ``metadata_id_mismatch``, ``empty_business_id``.
+
+Schema 2.1 changes vs 2.0:
+
+* ``requirement_id`` and ``anchor_id`` are the 1-based READING-ORDER sequence
+  ("1", "2", "3", ...), empty when the unit's start never resolved. ``sequence``
+  carries the same value as an int.
+* The positional key ``{pdf_hash[:12]}:{doc_offset_start}`` moved from
+  ``anchor_id`` to ``span_key``, emitted per unit and per chunk anchor.
+
+Schema 2.2 changes vs 2.1:
+
+* ``business_id`` is gone from every artifact. The engine holds no domain
+  identifier: the source's own id (``req_id``, ``subcategory_id``, ...) travels
+  only inside the untouched ``metadata`` object, per unit and per segment.
+* Warnings ``metadata_id_mismatch``, ``empty_business_id`` and ``id_mismatch``
+  are gone: nothing in the engine validates domain identifiers.
+* ``missing_section_ids`` / the ``missing_section`` call warning are gone from
+  the trace; heading-coverage checks belong to consumers of the artifacts.
+* ``totals`` no longer reports ``n_id_mismatches`` or ``n_missing_section_ids``.
 """
 
 import re
@@ -27,9 +59,13 @@ import datetime
 from dataclasses import asdict
 from pathlib import Path
 
-from .anchor_extraction import SegmentSpec, ResolvedSegment, _coerce_resolved_segment
+from .anchor_extraction import (
+    SegmentSpec,
+    ResolvedSegment,
+    _coerce_resolved_segment,
+)
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.2"
 
 
 def _now_iso() -> str:
@@ -55,13 +91,11 @@ def _offset_page(doc, offset: int):
     return doc.locate(offset).get("page")
 
 
-def _derive_title(text: str, requirement_id: str):
-    """Best-effort heading: the first sentence fragment after the id."""
+def _derive_title(text: str):
+    """Best-effort heading: the first sentence fragment of the unit text."""
     if not text:
         return None
     head = text[:160].strip()
-    if requirement_id and head.startswith(requirement_id):
-        head = head[len(requirement_id):]
     head = head.strip(" .-:\u2014")
     dot = head.find(".")
     title = (head[:dot] if dot > 0 else head).strip()
@@ -75,8 +109,6 @@ def _requirement_warnings(req) -> list:
         w.append("start_unresolved")
     if not req.end_resolved:
         w.append("end_unresolved")
-    if getattr(req, "id_mismatch", False):
-        w.append("id_mismatch")
     if not req.original_text:
         w.append("empty_text")
     if getattr(req, "ambiguous", False):
@@ -92,28 +124,65 @@ def _requirement_warnings(req) -> list:
     return w
 
 
+def _spec_metadata(spec):
+    """Metadata dict of a SegmentSpec or raw model segment dict, else None.
+
+    Serialization-only accessor: the engine never looks inside this object.
+    """
+    meta = spec.get("metadata") if isinstance(spec, dict) else getattr(spec, "metadata", None)
+    return meta if isinstance(meta, dict) else None
+
+
+def _segment_spec_row(spec) -> dict:
+    """One segment spec as a schema 2.0 object (metadata included)."""
+    if isinstance(spec, SegmentSpec):
+        return {
+            "start_anchor": spec.start_anchor,
+            "end_anchor": spec.end_anchor,
+            "end_before_anchor": spec.end_before_anchor,
+            "role": spec.role,
+            "start_after_anchor": spec.start_after_anchor,
+            "metadata": _spec_metadata(spec),
+        }
+    if isinstance(spec, dict):
+        return {
+            "start_anchor": spec.get("start_anchor"),
+            "end_anchor": spec.get("end_anchor"),
+            "end_before_anchor": spec.get("end_before_anchor"),
+            "role": spec.get("role", "requirement"),
+            "start_after_anchor": spec.get("start_after_anchor"),
+            "metadata": _spec_metadata(spec),
+        }
+    return {
+        "start_anchor": spec[0] if len(spec) > 0 else None,
+        "end_anchor": spec[1] if len(spec) > 1 else None,
+        "end_before_anchor": spec[2] if len(spec) > 2 else None,
+        "role": spec[3] if len(spec) > 3 else "requirement",
+        "start_after_anchor": spec[4] if len(spec) > 4 else None,
+        "metadata": spec[5] if len(spec) > 5 and isinstance(spec[5], dict) else None,
+    }
+
+
 def _serialize_segment_specs(specs) -> list:
-    """Emit segment anchor fields for each segment spec."""
-    out = []
-    for spec in specs or []:
-        if isinstance(spec, SegmentSpec):
-            out.append(spec.to_list())
-        elif isinstance(spec, dict):
-            out.append([
-                spec.get("start_anchor"),
-                spec.get("end_anchor"),
-                spec.get("end_before_anchor"),
-                spec.get("role", "requirement"),
-                spec.get("start_after_anchor"),
-            ])
-        elif isinstance(spec, (list, tuple)):
-            sa = spec[0] if len(spec) > 0 else None
-            ea = spec[1] if len(spec) > 1 else None
-            eba = spec[2] if len(spec) > 2 else None
-            role = spec[3] if len(spec) > 3 else "requirement"
-            saa = spec[4] if len(spec) > 4 else None
-            out.append([sa, ea, eba, role, saa])
-    return out
+    """Emit segment anchor fields for each segment spec (schema 2.0 objects)."""
+    return [
+        _segment_spec_row(spec)
+        for spec in specs or []
+        if isinstance(spec, (SegmentSpec, dict, list, tuple))
+    ]
+
+
+def _spec_metadata_list(specs) -> list:
+    """Per-segment metadata dicts (or None) in spec order."""
+    return [row["metadata"] for row in _serialize_segment_specs(specs)]
+
+
+def _unit_metadata(specs) -> dict:
+    """Unit-level metadata: shallow copy of the first segment that carries it."""
+    for meta in _spec_metadata_list(specs):
+        if meta:
+            return dict(meta)
+    return {}
 
 
 def _serialize_resolved_segments(segments) -> list:
@@ -153,7 +222,9 @@ def _chunk_block(doc, run_id, ordinal, res):
         seg_list = getattr(r, "segments", []) or []
         anchors.append({
             "idx": i,
-            "requirement_id": r.requirement_id,
+            # Chunk-local anchors carry no reading-order number yet (assigned by
+            # the stitcher); span_key links them to the final unit.
+            "span_key": getattr(r, "span_key", ""),
             "status": r.status,
             "start_anchor": r.start_anchor,
             "end_anchor": r.end_anchor,
@@ -202,10 +273,6 @@ def _chunk_block(doc, run_id, ordinal, res):
     }
     if res.malformed_items:
         model_output["malformed"] = res.malformed_items
-    missing = getattr(res, "missing_section_ids", None) or []
-    if missing:
-        model_output["missing_section_ids"] = list(missing)
-        call["warnings"] = ["missing_section"]
 
     return {
         "chunk_id": ordinal,
@@ -265,10 +332,23 @@ def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
         spans = getattr(q, "source_chunk_ids", []) or ([chunk_id] if chunk_id >= 0 else [])
         end_off = q.doc_offset_end
         page_end_off = (end_off - 1) if (end_off is not None and end_off > 0) else q.doc_offset_start
+        specs = getattr(q, "segment_anchor_pairs", []) or []
+        segment_metas = _spec_metadata_list(specs)
+        resolved_segments = [
+            _coerce_resolved_segment(s) for s in (getattr(q, "segments", []) or [])
+        ]
+        metas_aligned = len(segment_metas) == len(resolved_segments)
+        # The only ids the engine owns: reading order and position. Whatever the
+        # source calls this unit stays in `metadata`, unread.
+        anchor_id = getattr(q, "anchor_id", "")
         reqs.append({
             "uid": f"{run_id}#r{k:04d}",
-            "requirement_id": q.requirement_id,
-            "title": _derive_title(q.original_text, q.requirement_id),
+            "anchor_id": anchor_id,
+            "requirement_id": anchor_id,
+            "sequence": getattr(q, "sequence", 0),
+            "span_key": getattr(q, "span_key", ""),
+            "metadata": _unit_metadata(specs),
+            "title": _derive_title(q.original_text),
             "extracted_text": q.original_text,
             "requirement_text": getattr(q, "requirement_text", q.original_text),
             "questionnaire_text": getattr(q, "questionnaire_text", ""),
@@ -281,9 +361,7 @@ def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
             "anchors": {
                 "start_anchor": q.start_anchor,
                 "end_anchor": q.end_anchor,
-                "segment_anchor_pairs": _serialize_segment_specs(
-                    getattr(q, "segment_anchor_pairs", []) or []
-                ),
+                "segment_anchor_pairs": _serialize_segment_specs(specs),
             },
             "segments": [
                 {
@@ -294,8 +372,9 @@ def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
                     ],
                     "role": rs.role,
                     "resolved": rs.start >= 0 and rs.end > rs.start,
+                    "metadata": segment_metas[i] if metas_aligned else None,
                 }
-                for rs in (_coerce_resolved_segment(s) for s in (getattr(q, "segments", []) or []))
+                for i, rs in enumerate(resolved_segments)
             ],
             "trace": {
                 "chunk_id": chunk_id,
