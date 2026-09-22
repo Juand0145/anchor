@@ -23,7 +23,7 @@ dev = ["jupyter", "ipykernel"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["anchor_extract*"]
+include = ["anchor", "anchor_extract*"]
 
 [tool.setuptools.package-data]
 anchor_extract = ["prompts/*.txt", "prompts/profiles/*.txt"]

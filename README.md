@@ -49,6 +49,24 @@ cp .env.example .env       # set Azure OpenAI and/or ANTHROPIC_API_KEY
 
 See `.env.example`. Keys are read from the environment (e.g. `load_dotenv()`).
 
+## Phased API (read → blocks)
+
+Ingest a source and inspect its blocks before running any LLM call:
+
+```python
+import json
+import anchor
+
+doc = anchor.read("pdf/hipaa-simplification-201303.pdf", start_page=11, end_page=12)
+print(json.dumps(anchor.blocks(doc), indent=2)[:500])
+```
+
+`anchor.read` also accepts plain `.txt` files (paragraphs become blocks; page
+arguments are ignored). The document it returns is the same
+`DocumentExtraction` that `extract_document(..., doc=doc)` consumes.
+
+See [docs/phases.md](docs/phases.md) for the JSON shape and the text-ingest rules.
+
 ## Quickstart
 
 NIST AI RMF Playbook is the primary example profile:

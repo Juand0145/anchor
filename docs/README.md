@@ -2,6 +2,7 @@
 
 | Doc | Contents |
 |---|---|
+| [phases.md](phases.md) | Phased public API: `anchor.read` (PDF/text ingest) and `anchor.blocks` (JSON) |
 | [core_pipeline.md](core_pipeline.md) | Core engine: pipeline, data model, resolution, stitch, JSON artifacts |
 | [profiles.md](profiles.md) | Extraction profiles: how to author a detection prompt, checklist, bundled examples |
 | [testing.md](testing.md) | Unittest discover and chunk-budget sweep (offline / optional live) |
