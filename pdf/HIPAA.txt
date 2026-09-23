@@ -1,5 +1,0 @@
-This file moved to the canonical profiles directory:
-
-  anchor_extract/prompts/profiles/hipaa.txt
-
-See docs/profiles.md.

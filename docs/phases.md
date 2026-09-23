@@ -96,3 +96,8 @@ extraction = extract_document(
 
 See [core_pipeline.md](core_pipeline.md) for the design, [profiles.md](profiles.md)
 for the bundled profiles, and the README quickstart for the full HIPAA example.
+
+Look up a stitched unit by its reading-order id with `get_requirement` or
+`inspect_requirement` (metadata, model anchors, linked LLM calls, resolution).
+`doc=doc.extraction` is optional and adds a single-span `extracted_slice`.
+See [Inspecting a unit by anchor_id](../README.md#inspecting-a-unit-by-anchor_id).

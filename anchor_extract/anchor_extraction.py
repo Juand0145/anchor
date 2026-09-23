@@ -31,6 +31,7 @@ import json
 import datetime
 import hashlib
 import re
+import warnings
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -60,8 +61,18 @@ def generate_span_key(doc: Optional[DocumentExtraction], doc_offset_start: int) 
     return f"{doc.pdf_hash[:12]}:{doc_offset_start}"
 
 
-# Deprecated v2.0 name: ``anchor_id`` is now the 1-based reading-order sequence.
-generate_anchor_id = generate_span_key
+def generate_anchor_id(doc: Optional[DocumentExtraction], doc_offset_start: int) -> str:
+    """Deprecated alias of ``generate_span_key``.
+
+    Since schema 2.1 ``anchor_id`` is the reading-order sequence, not this
+    positional key. Call ``generate_span_key`` instead.
+    """
+    warnings.warn(
+        "generate_anchor_id is deprecated; use generate_span_key",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return generate_span_key(doc, doc_offset_start)
 
 
 class _Sequencer:
@@ -102,15 +113,6 @@ class SegmentSpec:
     # Verbatim domain fields emitted by the model, passed through to the JSON
     # artifacts. Opaque to the engine: no code branches on their keys.
     metadata: Optional[dict] = None
-
-    def to_list(self) -> list:
-        return [
-            self.start_anchor,
-            self.end_anchor,
-            self.end_before_anchor,
-            self.role,
-            self.start_after_anchor,
-        ]
 
 
 @dataclass

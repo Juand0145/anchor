@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import warnings
 
 from anchor_extract import anchor_extraction
 from anchor_extract.anchor_extraction import (
@@ -59,7 +60,12 @@ class TestGenerateSpanKey(unittest.TestCase):
         self.assertEqual(generate_span_key(None, 0), "")
 
     def test_legacy_name_is_an_alias(self):
-        self.assertIs(generate_anchor_id, generate_span_key)
+        doc = make_doc()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            got = generate_anchor_id(doc, 0)
+        self.assertEqual(got, generate_span_key(doc, 0))
+        self.assertTrue(any(issubclass(w.category, DeprecationWarning) for w in caught))
 
 
 class TestEngineHoldsNoDomainId(unittest.TestCase):

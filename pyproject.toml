@@ -13,13 +13,12 @@ authors = [{ name = "Juand0145", email = "juand0145@gmail.com" }]
 dependencies = [
   "pymupdf>=1.27",
   "anthropic>=0.100",
-  "pandas",
   "python-dotenv",
   "openai>=1.40",
 ]
 
 [project.optional-dependencies]
-dev = ["jupyter", "ipykernel"]
+dev = ["jupyter", "ipykernel", "pandas"]
 
 [tool.setuptools.packages.find]
 where = ["."]

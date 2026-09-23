@@ -23,8 +23,12 @@ frameworks (NIST AI RMF, HIPAA, …) are **example profiles**, documented in
 | Extraction profiles (detection prompts) | `anchor_extract/prompts/profiles/` |
 | Convenience wrapper + JSON helpers | `anchor_extract/pipeline.py` |
 | Trace artifacts (`extraction_run.json`, `requirements.json`) | `anchor_extract/trace_serialization.py` |
+| Inspection views (`inspect_requirement`, `unit_metadata`) | `anchor_extract/inspect.py` |
+| Plain-text ingest | `anchor_extract/ingest.py` |
+| Offline batch plans (no LLM) | `anchor_extract/batch_planning.py` |
+| Phased read API (`anchor.read`, `Document.blocks`) | `anchor/` |
 
-`notebooks/anchor_demo.ipynb` is a walkthrough; the package modules are authoritative.
+`anchor_demo.ipynb` (repo root) is a walkthrough; the package modules are authoritative.
 
 ### API legacy naming (v0)
 
@@ -308,7 +312,10 @@ Output of one LLM call: `requirements` (chunk-local) plus provenance/telemetry �
 (`ok`/`empty`/`overflow`/`verbatim_failure`/`json_error`/`api_error`),
 `raw_payload`, `malformed_items`, batch position (`batch_first_block` …
 `batch_doc_offset_end`), and `attempts: list[CallAttempt]`. `stop_reason` is the
-signal that drives the output-overflow shrink.
+signal that drives the output-overflow shrink. `raw_payload` stays in memory
+on `ExtractionResult` for the duration of the run. `extraction_run.json` does
+not persist the full raw tool dict. Use `inspect_requirement`: it prefers
+`model_requirement_parts` and falls back to that in-memory payload.
 
 ### `CallAttempt`
 One record per API attempt (success, retry, or fallback): `model`,
@@ -611,6 +618,10 @@ only in `requirements.json`.
   with role, `n_segments`, `n_segments_resolved`, `segments_partial`,
   `verbatim_match`, `resolved_via_prefix_fallback`, `ambiguous`).
 
+`extraction_run.json` stores resolved anchors and call telemetry, not the raw
+tool payload. That payload remains on `ExtractionResult.raw_payload` in memory;
+`inspect_requirement` reads `model_requirement_parts` and falls back to it.
+
 Both JSON files carry a controlled-vocabulary `warnings` list for triage:
 `start_unresolved`, `end_unresolved`, `empty_text`,
 `ambiguous_anchor`, `resolved_via_prefix_fallback`, `segments_partial`,
@@ -644,10 +655,28 @@ stage. Those writers are not part of this package.
 
 ---
 
+### Inspection API
+
+`inspect_requirement(extraction, anchor_id, doc=None)` returns one stitched unit:
+
+| Key | Contents |
+|---|---|
+| `metadata` | `unit` (first non-empty segment metadata) and `segments` (one dict or null per spec) |
+| `model_anchors` | Serialized segment specs plus unit `status` and top-level start/end anchors |
+| `llm_calls` | One entry per `source_chunk_ids`: model, tokens, stop reason, batch ranges, and that unit's raw tool dict |
+| `resolution` | Offsets, `verbatim_match`, `end_*` flags, resolved segments, warnings; `extracted_slice` when `doc` is passed and the unit is a single span |
+
+`get_requirement` accepts an int or str id and raises `KeyError` when missing.
+`unit_metadata` / `segment_metadatas` are the metadata accessors.
+`source_id_for_unit` (in `anchor_extract.coverage`) is a separate consumer
+helper: it keeps scanning until it finds `req_id` or `subcategory_id`.
+
+See the README section [Inspecting a unit by anchor_id](../README.md#inspecting-a-unit-by-anchor_id).
+
 ## 9. Implementation Map
 
-Production code lives in `anchor_extract/`. `notebooks/anchor_demo.ipynb` mirrors
-it for validation but is not authoritative.
+Production code lives in `anchor_extract/`. `anchor_demo.ipynb` at the repo root
+mirrors it for validation but is not authoritative.
 
 | Stage | Symbols | Location |
 |---|---|---|
@@ -667,10 +696,16 @@ it for validation but is not authoritative.
 | Telemetry | `summarize_extractions`, `FrameworkExtractionStats` | `anchor_extract/anchor_extraction.py` |
 | Pipeline wrapper + JSON helpers | `extract_document`, `to_requirements_json`, `to_extraction_run_json`, `save_json` | `anchor_extract/pipeline.py` |
 | Trace serialization | `build_extraction_run`, `build_requirements_doc`, `_requirement_warnings`, `_serialize_segment_specs`, `_serialize_resolved_segments` | `anchor_extract/trace_serialization.py` |
+| Inspection | `inspect_requirement`, `get_requirement`, `unit_metadata`, `segment_metadatas` | `anchor_extract/inspect.py` |
+| Plain-text ingest | `extract_text` | `anchor_extract/ingest.py` |
+| Offline batch plans | `plan_batches`, `summarize_batch_plan` | `anchor_extract/batch_planning.py` |
+| Phased public read | `read`, `Document`, `blocks` | `anchor/` |
+| Coverage (consumer, not engine) | `source_ids`, `source_id_for_unit`, `coverage_score` | `anchor_extract/coverage.py` |
 
 ### Dependencies
-`pymupdf >= 1.27`, `anthropic >= 0.100`, `python-dotenv`, `pandas`.
-`ANTHROPIC_API_KEY` must be set in the environment.
+`pymupdf >= 1.27`, `anthropic >= 0.100`, `openai >= 1.40`, `python-dotenv`.
+`pandas` is only the notebook/dev extra (`pip install -e ".[dev]"`, with Jupyter).
+`ANTHROPIC_API_KEY` and/or Azure OpenAI variables must be set in the environment.
 
 ### Determinism notes
 `temperature=0`; anchor resolution is pure string search; offsets, slicing, and

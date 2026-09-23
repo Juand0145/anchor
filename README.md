@@ -29,7 +29,8 @@ JSON artifacts are `schema_version` **2.2**: `anchor_id` (exported as
 `span_key` is the positional key `{pdf_hash[:12]}:{doc_offset_start}` used for
 dedup. Those are the only ids the engine assigns; the identifier printed in the
 source (`160.103`, `GOVERN 1.2`) travels verbatim inside the segment
-`metadata`, which no engine code reads.
+`metadata`, which no engine code reads. `generate_anchor_id` is deprecated;
+use `generate_span_key` for the positional key.
 
 ## Install
 
@@ -39,6 +40,7 @@ python -m venv .venv
 .venv\Scripts\activate   # Windows
 # source .venv/bin/activate  # macOS/Linux
 pip install -e .
+# Notebook (pandas DataFrame + Jupyter): pip install -e ".[dev]"
 # or: pip install -r requirements.txt
 cp .env.example .env       # set Azure OpenAI and/or ANTHROPIC_API_KEY
 ```
@@ -115,6 +117,29 @@ Also bundled: the NIST AI RMF Playbook profile
 ([`ai_rmf_playbook.txt`](anchor_extract/prompts/profiles/ai_rmf_playbook.txt),
 pattern `EXAMPLE_AI_RMF_BOUNDARY_PATTERN`) — the worked reference for
 non-contiguous, role-tagged units. Its PDF is not bundled in this repo.
+
+## Inspecting a unit by anchor_id
+
+After `extract_document`, look up a stitched unit by its 1-based reading-order
+id (`int` or `str`). `unit_metadata` is the first non-empty segment metadata
+dict. Source ids such as `req_id` that sit on a later segment are read with
+`source_id_for_unit` / `source_ids` (`anchor_extract.coverage`), which the
+engine does not call.
+
+```python
+from anchor_extract import inspect_requirement, get_requirement, unit_metadata
+
+view = inspect_requirement(extraction, "1", doc=doc.extraction)  # doc optional
+req = get_requirement(extraction, 1)
+print(view["metadata"]["unit"].get("req_id"))
+print(unit_metadata(req))
+print(view["model_anchors"]["start_anchor"], view["llm_calls"][0]["chunk_id"])
+```
+
+`inspect_requirement` returns `metadata` (unit + per-segment), `model_anchors`,
+`llm_calls` (one entry per `source_chunk_ids`), and `resolution` (offsets,
+flags, warnings, and `extracted_slice` for a single span when `doc` is passed).
+`segment_metadatas(req)` is the per-segment list in spec order.
 
 ## How to write an extraction profile
 

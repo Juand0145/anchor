@@ -4,6 +4,7 @@ Core engine (anchors, not bodies) plus extraction profiles that define which
 logical units to extract. v0 public names remain requirement-centric.
 """
 
+from .coverage import source_id_for_unit, source_ids
 from .anchor_extraction import (
     ANCHOR_INPUT_SCHEMA,
     ANCHOR_SYSTEM_PROMPT_GENERIC,
@@ -74,6 +75,8 @@ __all__ = [
     "make_run_id",
     "save_json",
     "segment_metadatas",
+    "source_id_for_unit",
+    "source_ids",
     "summarize_extractions",
     "to_extraction_run_json",
     "to_requirements_json",

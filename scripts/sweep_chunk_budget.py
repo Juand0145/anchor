@@ -121,21 +121,15 @@ def main(argv=None) -> int:
 
 
 def _source_ids(requirements) -> list:
-    """Identifiers as printed in the source, read from segment metadata.
+    """Identifiers as printed in the source, in requirement order.
 
     Consumer-side read for reporting only: the engine never interprets these
-    keys, so coverage checks live here rather than in the pipeline.
-    ``unit_metadata`` is the shared first-non-empty metadata accessor.
+    keys. ``source_ids_in_order`` keeps scanning past a title-only first
+    segment until it finds ``req_id`` or ``subcategory_id``.
     """
-    from anchor_extract.inspect import unit_metadata
+    from anchor_extract.coverage import source_ids_in_order
 
-    ids = []
-    for r in requirements:
-        meta = unit_metadata(r)
-        value = meta.get("req_id") or meta.get("subcategory_id")
-        if isinstance(value, str) and value.strip():
-            ids.append(value.strip())
-    return ids
+    return source_ids_in_order(requirements)
 
 
 def _run_live(args, doc, pattern, budgets) -> int:
