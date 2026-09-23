@@ -125,17 +125,16 @@ def _source_ids(requirements) -> list:
 
     Consumer-side read for reporting only: the engine never interprets these
     keys, so coverage checks live here rather than in the pipeline.
+    ``unit_metadata`` is the shared first-non-empty metadata accessor.
     """
+    from anchor_extract.inspect import unit_metadata
+
     ids = []
     for r in requirements:
-        for spec in getattr(r, "segment_anchor_pairs", []) or []:
-            meta = getattr(spec, "metadata", None)
-            if not isinstance(meta, dict):
-                continue
-            value = meta.get("req_id") or meta.get("subcategory_id")
-            if isinstance(value, str) and value.strip():
-                ids.append(value.strip())
-                break
+        meta = unit_metadata(r)
+        value = meta.get("req_id") or meta.get("subcategory_id")
+        if isinstance(value, str) and value.strip():
+            ids.append(value.strip())
     return ids
 
 

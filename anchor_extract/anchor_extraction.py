@@ -354,6 +354,13 @@ class ExtractedRequirement:
     # the requirement was stitched across chunks).
     source_chunk_id: int = -1
     source_chunk_ids: list = field(default_factory=list)
+    # Raw tool item for this unit in the chunk that produced it. After a
+    # multi-chunk stitch, ``model_requirement_parts`` holds one dict per
+    # contributing chunk (same order as ``source_chunk_ids``) and
+    # ``model_requirement`` is the first of those. Opaque: the engine does
+    # not read keys inside these dicts.
+    model_requirement: Optional[dict] = None
+    model_requirement_parts: list = field(default_factory=list)
     requirement_text: str = ""
     questionnaire_text: str = ""
     context_text: str = ""
@@ -960,6 +967,8 @@ def _build_chunk_requirement_from_segments(
         end_anchor_unresolved=any_end_unresolved,
         start_via_fallback=any_start_fallback,
         ambiguous=any_ambiguous,
+        model_requirement=dict(raw) if isinstance(raw, dict) else None,
+        model_requirement_parts=[dict(raw)] if isinstance(raw, dict) else [],
     )
 
 
@@ -1338,6 +1347,8 @@ class PendingRequirement:
     segment_anchor_pairs: list = field(default_factory=list)
     n_segments: int = 1
     segments_partial: bool = False
+    # Raw tool dicts from each chunk that contributed to this open unit.
+    model_requirement_parts: list = field(default_factory=list)
 
 
 @dataclass
@@ -1371,6 +1382,8 @@ def _finalize_requirement(
     ambiguous: bool = False,
     sequence: int = 0,
     span_key: str = "",
+    model_requirement: Optional[dict] = None,
+    model_requirement_parts: Optional[list] = None,
 ) -> ExtractedRequirement:
     """Build a document-level requirement from resolved segment offsets.
 
@@ -1414,6 +1427,9 @@ def _finalize_requirement(
     chunk_ids = source_chunk_ids if source_chunk_ids is not None else (
         [source_chunk_id] if source_chunk_id >= 0 else []
     )
+    parts = list(model_requirement_parts or [])
+    if model_requirement is None and parts:
+        model_requirement = parts[0]
 
     if n_segments == 1 and not segments_partial:
         verbatim_match = bool(end_resolved and bound_start >= 0 and original_text)
@@ -1455,6 +1471,8 @@ def _finalize_requirement(
         ambiguous=ambiguous,
         source_chunk_id=source_chunk_id,
         source_chunk_ids=chunk_ids,
+        model_requirement=model_requirement,
+        model_requirement_parts=parts,
     )
 
 
@@ -1472,6 +1490,33 @@ def _doc_segments_from_chunk_req(r: ExtractedRequirement, batch_offset_start: in
     if r.doc_offset_start >= 0 and r.doc_offset_end > r.doc_offset_start:
         return [ResolvedSegment(r.doc_offset_start, r.doc_offset_end, ROLE_REQUIREMENT)]
     return []
+
+
+def _stored_model_parts(obj) -> list:
+    """Raw tool dicts carried on a chunk requirement or a pending unit.
+
+    ``model_requirement`` is included only when it is not already one of
+    ``model_requirement_parts``, so a chunk-local requirement does not
+    contribute the same dict twice.
+    """
+    parts = [
+        p for p in (getattr(obj, "model_requirement_parts", None) or [])
+        if isinstance(p, dict)
+    ]
+    raw = getattr(obj, "model_requirement", None)
+    if isinstance(raw, dict) and raw not in parts:
+        parts.append(raw)
+    return parts
+
+
+def _merge_model_parts(*objs) -> list:
+    """Concatenate raw tool dicts from each contributing chunk requirement."""
+    merged: list = []
+    for obj in objs:
+        if obj is None:
+            continue
+        merged.extend(_stored_model_parts(obj))
+    return merged
 
 
 def _finalize_from_chunk_requirement(
@@ -1512,6 +1557,8 @@ def _finalize_from_chunk_requirement(
         ambiguous=r.ambiguous,
         sequence=sequence,
         span_key=getattr(r, "span_key", ""),
+        model_requirement=getattr(r, "model_requirement", None),
+        model_requirement_parts=_stored_model_parts(r),
     )
 
 
@@ -1587,6 +1634,7 @@ def _stitch_chunk(
                         end_anchor_unresolved=pending.end_anchor_unresolved or r.end_anchor_unresolved,
                         sequence=pending.sequence,
                         span_key=pending.span_key,
+                        model_requirement_parts=_merge_model_parts(pending, r),
                     ))
                 else:
                     final.append(_finalize_requirement(
@@ -1598,12 +1646,14 @@ def _stitch_chunk(
                         end_anchor_unresolved=pending.end_anchor_unresolved,
                         sequence=pending.sequence,
                         span_key=pending.span_key,
+                        model_requirement_parts=_merge_model_parts(pending, r),
                     ))
                 pending = None
                 continue
             if is_continuation and not has_end:
                 if chunk_id not in pending.chunk_ids:
                     pending.chunk_ids.append(chunk_id)
+                pending.model_requirement_parts.extend(_stored_model_parts(r))
                 continue  # interior continuation: still no end, keep pending open
             # Pending interrupted by a NEW requirement: bounding at that next
             # start is deterministic containment, but not a confirmed terminal
@@ -1632,6 +1682,7 @@ def _stitch_chunk(
                     segment_anchor_pairs=pending.segment_anchor_pairs,
                     sequence=pending.sequence,
                     span_key=pending.span_key,
+                    model_requirement_parts=_merge_model_parts(pending),
                 ))
             elif pending.segments:
                 segs = [_coerce_resolved_segment(s) for s in pending.segments]
@@ -1652,6 +1703,7 @@ def _stitch_chunk(
                     segment_anchor_pairs=pending.segment_anchor_pairs,
                     sequence=pending.sequence,
                     span_key=pending.span_key,
+                    model_requirement_parts=_merge_model_parts(pending),
                 ))
             else:
                 final.append(_finalize_requirement(
@@ -1663,6 +1715,7 @@ def _stitch_chunk(
                     end_anchor_unresolved=pending.end_anchor_unresolved,
                     sequence=pending.sequence,
                     span_key=pending.span_key,
+                    model_requirement_parts=_merge_model_parts(pending),
                 ))
             pending = None
 
@@ -1682,6 +1735,7 @@ def _stitch_chunk(
                 segment_anchor_pairs=r.segment_anchor_pairs,
                 n_segments=r.n_segments,
                 segments_partial=r.segments_partial or r.n_segments_resolved < r.n_segments,
+                model_requirement_parts=_merge_model_parts(r),
             )
             continue
 
@@ -1695,6 +1749,7 @@ def _stitch_chunk(
                 source_chunk_id=chunk_id,
                 segment_anchor_pairs=r.segment_anchor_pairs,
                 sequence=sequencer.assign(),
+                model_requirement_parts=_merge_model_parts(r),
             ))
             continue
 
@@ -1730,6 +1785,7 @@ def _stitch_chunk(
                 segment_anchor_pairs=r.segment_anchor_pairs,
                 sequence=sequencer.assign(),
                 span_key=getattr(r, "span_key", ""),
+                model_requirement_parts=_merge_model_parts(r),
             ))
             continue
 
@@ -1764,6 +1820,7 @@ def _stitch_chunk(
                         segment_anchor_pairs=r.segment_anchor_pairs,
                         sequence=sequencer.assign(),
                         span_key=getattr(r, "span_key", ""),
+                        model_requirement_parts=_merge_model_parts(r),
                     ))
                 else:
                     final.append(_finalize_requirement(
@@ -1777,6 +1834,7 @@ def _stitch_chunk(
                         segment_anchor_pairs=r.segment_anchor_pairs,
                         sequence=sequencer.assign(),
                         span_key=getattr(r, "span_key", ""),
+                        model_requirement_parts=_merge_model_parts(r),
                     ))
                 continue
             pending = PendingRequirement(
@@ -1792,6 +1850,7 @@ def _stitch_chunk(
                 segment_anchor_pairs=r.segment_anchor_pairs,
                 n_segments=r.n_segments,
                 segments_partial=r.segments_partial or end_anchor_supplied_but_unresolved,
+                model_requirement_parts=_merge_model_parts(r),
             )
             continue
 
@@ -1804,6 +1863,7 @@ def _stitch_chunk(
             source_chunk_id=chunk_id,
             segment_anchor_pairs=r.segment_anchor_pairs,
             span_key=getattr(r, "span_key", ""),
+            model_requirement_parts=_merge_model_parts(r),
         ))
     return pending
 
@@ -2020,6 +2080,7 @@ def extract_requirements_for_range(
             segment_anchor_pairs=pending.segment_anchor_pairs,
             sequence=pending.sequence,
             span_key=pending.span_key,
+            model_requirement_parts=_merge_model_parts(pending),
         ))
         pending = None
 

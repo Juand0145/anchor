@@ -23,6 +23,12 @@ from .anchor_extraction import (
     generate_span_key,
     summarize_extractions,
 )
+from .inspect import (
+    get_requirement,
+    inspect_requirement,
+    segment_metadatas,
+    unit_metadata,
+)
 from .pdf_extraction import DocumentExtraction, TextBlock, extract_pdf
 from .pipeline import (
     extract_document,
@@ -59,13 +65,17 @@ __all__ = [
     "extract_pdf",
     "extract_requirements_for_range",
     "extract_requirements_from_chunk",
+    "get_requirement",
+    "inspect_requirement",
     # generate_anchor_id is a deprecated alias of generate_span_key: since
     # schema 2.1 anchor_id is the reading-order sequence, not a positional key.
     "generate_anchor_id",
     "generate_span_key",
     "make_run_id",
     "save_json",
+    "segment_metadatas",
     "summarize_extractions",
     "to_extraction_run_json",
     "to_requirements_json",
+    "unit_metadata",
 ]
