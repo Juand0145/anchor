@@ -17,6 +17,7 @@ from .settings import CLAUDE_CONFIG, PDF_PROCESSING, PDF_TEXT_CLEANING
 from .trace_serialization import (
     build_extraction_run,
     build_requirements_doc,
+    build_units_doc,
     make_run_id,
 )
 
@@ -35,7 +36,8 @@ def extract_document(
 ) -> RangeExtraction:
     """Extract logical units from a PDF using an extraction-profile detection prompt.
 
-    v0 names: units are returned as ``requirements``; the profile string is
+    Returns a ``RangeExtraction`` whose stitched deliverable is ``.units``
+    (``.requirements`` is the deprecated v0 alias). The profile string is
     ``detection_prompt``.
     """
     if doc is None:
@@ -61,12 +63,22 @@ def extract_document(
     )
 
 
+def to_units_json(
+    framework_name: str,
+    doc: DocumentExtraction,
+    extraction: RangeExtraction,
+) -> dict:
+    """Build the lean units.json document (schema 3.0)."""
+    run_id = make_run_id(doc, extraction.results)
+    return build_units_doc(framework_name, run_id, doc, extraction)
+
+
 def to_requirements_json(
     framework_name: str,
     doc: DocumentExtraction,
     extraction: RangeExtraction,
 ) -> dict:
-    """Build the lean requirements.json document."""
+    """Deprecated: ``to_units_json`` with the legacy ``requirements`` keys."""
     run_id = make_run_id(doc, extraction.results)
     return build_requirements_doc(framework_name, run_id, doc, extraction)
 

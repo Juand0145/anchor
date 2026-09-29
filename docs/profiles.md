@@ -102,10 +102,11 @@ A unit whose start never resolved gets no reading-order number: `sequence` is
 contiguous over real units. The top-level `requirement_id` on the wire is
 deprecated and ignored.
 
-`requirements.json` and `extraction_run.json` are `schema_version` `2.2`: units
+The deliverable and `extraction_run.json` are `schema_version` `3.0`: units
 carry `sequence`, `span_key` and `metadata`, `requirement_id` is the
 reading-order number, and `segment_anchor_pairs` entries are objects rather than
-5-element lists. There is no `business_id` and no identifier validation: since
+5-element lists. The deliverable's array is `units` (`to_units_json`); the
+legacy `requirements` key is still available through `to_requirements_json`. There is no `business_id` and no identifier validation: since
 the engine never reads `req_id`, a wrong one is invisible to it, so checking the
 source's numbering is the consumer's job (see
 [docs/testing.md](testing.md)).

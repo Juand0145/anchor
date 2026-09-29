@@ -15,7 +15,7 @@ Contract:
   ``original_text`` is the ``requirement``-role text only (joined with
   ``SEGMENT_SEPARATOR`` when that role has multiple slices). Offsets are the
   source of truth.
-* A unit that spans chunks is stitched via a single ``PendingRequirement``
+* A unit that spans chunks is stitched via a single ``PendingUnit``
   state as the orchestrator walks chunks FORWARD ONLY (no jumpback).
 * Anything that cannot be closed by a confirmed end anchor is emitted, bounded
   deterministically, and flagged (``end_resolved=False``) -- never dropped,
@@ -146,7 +146,7 @@ ANCHOR_INPUT_SCHEMA = {
     "properties": {
         "requirements": {
             "type": "array",
-            "description": "Requirement boundaries found in the chunk. Empty list is valid when the chunk contains none.",
+            "description": "Boundaries of the logical units found in the chunk, one item per unit ('requirement' is the legacy name of the array, kept for wire compatibility). Empty list is valid when the chunk contains none.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -264,10 +264,11 @@ def build_anchor_system_prompt(framework_detection_prompt: str) -> str:
 # Data model
 # --------------------------------------------------------------------------- #
 @dataclass
-class ExtractedRequirement:
+class ExtractedUnit:
     """One logical unit located by anchors, after deterministic text recovery.
 
-    v0 type name remains ``ExtractedRequirement``. ``original_text`` is NOT
+    ``ExtractedRequirement`` is the deprecated v0 alias of this class.
+    ``original_text`` is NOT
     produced by the LLM: it is the ``requirement``-role text only (a single
     slice, or ``SEGMENT_SEPARATOR.join`` of that role's slices). The contiguous
     invariant ``full_text[start:end] == original_text`` holds only for single-span
@@ -316,7 +317,7 @@ class ExtractedRequirement:
     span_key: str = ""
 
     # Resolved segment offsets (document coordinates after stitching; chunk-local
-    # before). Provenance source of truth for multi-span requirements.
+    # before). Provenance source of truth for multi-span units.
     segments: list = field(default_factory=list)
     n_segments: int = 1
     n_segments_resolved: int = 0
@@ -349,7 +350,7 @@ class ExtractedRequirement:
     # ordering window -- left unresolved on purpose (no guessing).
     ambiguous: bool = False
 
-    # Traceability (set by the stitcher on document-level requirements only):
+    # Traceability (set by the stitcher on document-level units only):
     # the chunk ordinal(s) -- 1-based index into RangeExtraction.results -- whose
     # call(s) produced this requirement. ``source_chunk_id`` is the START chunk;
     # ``source_chunk_ids`` lists every chunk that contributed text (len > 1 means
@@ -378,6 +379,10 @@ class ExtractedRequirement:
         return self.anchor_id
 
 
+# Deprecated v0 name of the stitched-unit type.
+ExtractedRequirement = ExtractedUnit
+
+
 @dataclass
 class CallAttempt:
     """Record of a single API call attempt within extract_requirements_from_chunk."""
@@ -390,8 +395,8 @@ class CallAttempt:
 
 @dataclass
 class ExtractionResult:
-    """Output of one LLM extraction call (chunk-local requirements + provenance)."""
-    requirements: list                  # list[ExtractedRequirement]
+    """Output of one LLM extraction call (chunk-local units + provenance)."""
+    chunk_units: list                   # list[ExtractedUnit], chunk-local
 
     # Provenance / observability
     model_used: Optional[str]
@@ -404,7 +409,7 @@ class ExtractionResult:
     chunk_hash: str
     timestamp: str
 
-    # Batch position in the document (for provenance / mapping requirements back
+    # Batch position in the document (for provenance / mapping units back
     # to the batch that produced them). -1 when not applicable.
     batch_first_block: int = -1
     batch_last_block: int = -1
@@ -418,21 +423,30 @@ class ExtractionResult:
     malformed_items: list = field(default_factory=list)
     attempts: list = field(default_factory=list)
 
+    @property
+    def requirements(self) -> list:
+        """Deprecated read-only alias of ``chunk_units`` (v0 name).
 
-def _derive_batch_status(requirements: list, malformed: list, stop_reason: str = "") -> str:
+        The constructor keyword is ``chunk_units``; only attribute reads are
+        aliased.
+        """
+        return self.chunk_units
+
+
+def _derive_batch_status(units: list, malformed: list, stop_reason: str = "") -> str:
     """Collapse a batch outcome into one explicit status label.
 
     ``overflow`` (output hit max_tokens, JSON truncated, nothing usable parsed)
     is distinguished from a genuinely ``empty`` chunk -- they look identical in
-    the requirement count but mean opposite things for debugging.
+    the unit count but mean opposite things for debugging.
     """
     if malformed:
         return "json_error"
-    if stop_reason == "max_tokens" and not requirements:
+    if stop_reason == "max_tokens" and not units:
         return "overflow"
-    if any(not r.verbatim_match for r in requirements):
+    if any(not r.verbatim_match for r in units):
         return "verbatim_failure"
-    if not requirements:
+    if not units:
         return "empty"
     return "ok"
 
@@ -858,8 +872,8 @@ def _build_chunk_requirement_from_segments(
     chunk_text: str,
     chunk_doc_offset_start: int,
     doc: Optional[DocumentExtraction],
-) -> ExtractedRequirement:
-    """Assemble one chunk-local ExtractedRequirement from resolved segments."""
+) -> ExtractedUnit:
+    """Assemble one chunk-local ExtractedUnit from resolved segments."""
     status = raw.get("status", "")
     n_segments = len(segment_specs)
     chunk_segments: list = []
@@ -944,7 +958,7 @@ def _build_chunk_requirement_from_segments(
         page = loc.get("page")
         bbox = loc.get("bbox")
 
-    return ExtractedRequirement(
+    return ExtractedUnit(
         span_key=generate_span_key(doc, doc_start),
         original_text=original_text,
         requirement_text=requirement_text,
@@ -1065,7 +1079,7 @@ def extract_requirements_from_chunk(
         for a in llm_result.attempts
     ]
     return ExtractionResult(
-        requirements=validated,
+        chunk_units=validated,
         model_used=llm_result.model_used,
         input_tokens=llm_result.input_tokens,
         output_tokens=llm_result.output_tokens,
@@ -1305,7 +1319,7 @@ def _failed_batch_result(exc: Exception, batch_text: str,
     """Explicit ``api_error`` result so an exhausted fallback chain on one batch
     does not abort the whole run (no silent failure)."""
     return ExtractionResult(
-        requirements=[],
+        chunk_units=[],
         model_used=None,
         input_tokens=0,
         output_tokens=0,
@@ -1326,12 +1340,14 @@ def _failed_batch_result(exc: Exception, batch_text: str,
 
 
 @dataclass
-class PendingRequirement:
-    """A requirement opened in one chunk and not yet closed. Offsets are the
+class PendingUnit:
+    """A unit opened in one chunk and not yet closed. Offsets are the
     source of truth: only the document ``start`` offset persists across chunks;
     the closing chunk supplies the end. At most one is open at a time.
 
-    For multi-span requirements, ``segments`` holds resolved document segment
+    ``PendingRequirement`` is the deprecated v0 alias of this class.
+
+    For multi-span units, ``segments`` holds resolved document segment
     offsets collected so far and ``segment_anchor_pairs`` holds the full model
     spec (including unresolved segments). Only one open multi-span pending is
     supported at a time."""
@@ -1353,15 +1369,37 @@ class PendingRequirement:
     model_requirement_parts: list = field(default_factory=list)
 
 
+# Deprecated v0 name of the open-unit carrier.
+PendingRequirement = PendingUnit
+
+
 @dataclass
 class RangeExtraction:
     """Output of the linear orchestrator.
 
     ``results`` keeps every per-chunk ExtractionResult for telemetry; the
-    deliverable is ``requirements`` -- the stitched, document-level list.
+    deliverable is ``units`` -- the stitched, document-level list.
     """
     results: list           # list[ExtractionResult] in batch order
-    requirements: list      # list[ExtractedRequirement], stitched & document-level
+    units: list             # list[ExtractedUnit], stitched & document-level
+
+    @property
+    def requirements(self) -> list:
+        """Deprecated read-only alias of ``units`` (v0 name).
+
+        The constructor takes ``units``; only attribute reads are aliased.
+        """
+        return self.units
+
+    def tabular(self, doc=None) -> dict:
+        """Flat views for notebooks: ``segments``, ``units``, ``anchors``, ``calls``.
+
+        See ``anchor_extract.tabular.tabular_views``. ``doc`` is optional and
+        adds segment text and page numbers. Read-only: ``results`` and
+        ``units`` are untouched.
+        """
+        from .tabular import tabular_views   # local: tabular imports this module
+        return tabular_views(self, doc)
 
 
 def _finalize_requirement(
@@ -1386,7 +1424,7 @@ def _finalize_requirement(
     span_key: str = "",
     model_requirement: Optional[dict] = None,
     model_requirement_parts: Optional[list] = None,
-) -> ExtractedRequirement:
+) -> ExtractedUnit:
     """Build a document-level requirement from resolved segment offsets.
 
     When ``segment_offsets`` is omitted, falls back to ``[(start_off, end_off)]``
@@ -1444,7 +1482,7 @@ def _finalize_requirement(
             and original_text
         )
 
-    return ExtractedRequirement(
+    return ExtractedUnit(
         sequence=sequence,
         span_key=span_key or generate_span_key(doc, bound_start),
         original_text=original_text,
@@ -1478,7 +1516,7 @@ def _finalize_requirement(
     )
 
 
-def _doc_segments_from_chunk_req(r: ExtractedRequirement, batch_offset_start: int) -> list:
+def _doc_segments_from_chunk_req(r: ExtractedUnit, batch_offset_start: int) -> list:
     """Translate chunk-local segment offsets to document coordinates (with role)."""
     if r.segments:
         return [
@@ -1523,7 +1561,7 @@ def _merge_model_parts(*objs) -> list:
 
 def _finalize_from_chunk_requirement(
     doc: DocumentExtraction,
-    r: ExtractedRequirement,
+    r: ExtractedUnit,
     batch_offset_start: int,
     chunk_id: int,
     source_chunk_ids: Optional[list] = None,
@@ -1532,7 +1570,7 @@ def _finalize_from_chunk_requirement(
     end_anchor_unresolved: Optional[bool] = None,
     status: Optional[str] = None,
     sequence: int = 0,
-) -> ExtractedRequirement:
+) -> ExtractedUnit:
     """Finalize a chunk-local requirement (single- or multi-span) at document level."""
     doc_segments = _doc_segments_from_chunk_req(r, batch_offset_start)
     if end_resolved is None:
@@ -1568,13 +1606,13 @@ def _stitch_chunk(
     doc: DocumentExtraction,
     reqs: list,
     batch_offset_start: int,
-    pending: Optional[PendingRequirement],
+    pending: Optional[PendingUnit],
     final: list,
     range_end_offset: int,
     chunk_id: int = -1,
     sequencer: Optional[_Sequencer] = None,
-) -> Optional[PendingRequirement]:
-    """Fold one chunk's chunk-local requirements into the linear ``final`` list,
+) -> Optional[PendingUnit]:
+    """Fold one chunk's chunk-local units into the linear ``final`` list,
     threading the single open ``pending`` requirement across chunk boundaries.
 
     ``chunk_id`` is the 1-based ordinal of the chunk being stitched (its index in
@@ -1595,7 +1633,7 @@ def _stitch_chunk(
     as ``pending`` rather than bounded at the range end, so it cannot swallow the
     rest of the document. Never silent, never a loop.
     """
-    def closed_chunks(p: PendingRequirement) -> list:
+    def closed_chunks(p: PendingUnit) -> list:
         return sorted(set(p.chunk_ids + [chunk_id]))
 
     # Reading-order numbering: a new number per logical unit whose start
@@ -1724,7 +1762,7 @@ def _stitch_chunk(
         # --- Open a new pending when the LAST item runs off the chunk end ---
         if is_last and r.status == "truncated_at_end" and has_start:
             doc_segs = _doc_segments_from_chunk_req(r, batch_offset_start)
-            pending = PendingRequirement(
+            pending = PendingUnit(
                 start=r.doc_offset_start,
                 start_anchor=r.start_anchor,
                 sequence=sequencer.assign(),
@@ -1839,7 +1877,7 @@ def _stitch_chunk(
                         model_requirement_parts=_merge_model_parts(r),
                     ))
                 continue
-            pending = PendingRequirement(
+            pending = PendingUnit(
                 start=r.doc_offset_start,
                 start_anchor=r.start_anchor,
                 sequence=sequencer.assign(),
@@ -1896,8 +1934,8 @@ def extract_requirements_for_range(
     """Block-driven, dynamically-budgeted anchor extraction with linear,
     forward-only multi-chunk stitching.
 
-    The cursor never moves backward. A requirement larger than one chunk is
-    handled by a persisted ``PendingRequirement`` (its document start offset),
+    The cursor never moves backward. A unit larger than one chunk is
+    handled by a persisted ``PendingUnit`` (its document start offset),
     closed when a later chunk supplies the end anchor. Output overflow
     (``stop_reason == "max_tokens"``) is the only reason a start block is
     reprocessed: the budget shrinks and the same start retries, then the cursor
@@ -1905,10 +1943,10 @@ def extract_requirements_for_range(
     ``api_error`` result and the cursor force-advances (no silent abort).
 
     Returns:
-        RangeExtraction(results=per-chunk telemetry, requirements=stitched).
+        RangeExtraction(results=per-chunk telemetry, units=stitched).
     """
     if not doc.blocks:
-        return RangeExtraction(results=[], requirements=[])
+        return RangeExtraction(results=[], units=[])
 
     first_block_idx = 0 if start_page is None else _page_to_first_block_idx(doc, start_page)
     last_block_idx = (len(doc.blocks) - 1) if end_page is None else _page_to_last_block_idx(doc, end_page)
@@ -1940,9 +1978,9 @@ def extract_requirements_for_range(
     consecutive_shrinks = 0
     last_shrunk_cursor = -1
     range_end_offset = doc.blocks[last_block_idx].char_end
-    pending: Optional[PendingRequirement] = None
+    pending: Optional[PendingUnit] = None
     results: list = []
-    requirements: list = []
+    units: list = []
     # Reading-order display ids: 1, 2, 3, ... across the whole range.
     sequencer = _Sequencer()
 
@@ -2006,10 +2044,10 @@ def extract_requirements_for_range(
         results.append(result)
 
         if verbose:
-            ok = sum(1 for r in result.requirements if r.status == "complete")
-            tr = sum(1 for r in result.requirements if r.status == "truncated_at_end")
+            ok = sum(1 for r in result.chunk_units if r.status == "complete")
+            tr = sum(1 for r in result.chunk_units if r.status == "truncated_at_end")
             mf = len(result.malformed_items)
-            print(f"{len(result.requirements)} reqs ({ok} ok, {tr} trunc) | "
+            print(f"{len(result.chunk_units)} units ({ok} ok, {tr} trunc) | "
                   f"stop={result.stop_reason} | {result.response_time_s}s"
                   + (f" | malformed={mf}" if mf else ""))
 
@@ -2043,15 +2081,15 @@ def extract_requirements_for_range(
         last_shrunk_cursor = -1
         current_target = initial_target
 
-        before = len(requirements)
+        before = len(units)
         # chunk_id == the 1-based ordinal of this result in `results` (the same
-        # id used in extraction_run.json), so requirements link back to their call.
-        pending = _stitch_chunk(doc, result.requirements, batch_offset_start,
-                                pending, requirements, range_end_offset,
+        # id used in extraction_run.json), so units link back to their call.
+        pending = _stitch_chunk(doc, result.chunk_units, batch_offset_start,
+                                pending, units, range_end_offset,
                                 chunk_id=len(results), sequencer=sequencer)
         if verbose:
             state = "pending OPEN" if pending is not None else "no pending"
-            print(f"  -> stitched {len(requirements) - before} requirement(s) | {state}")
+            print(f"  -> stitched {len(units) - before} unit(s) | {state}")
 
         cursor = last_idx + 1
         if cursor > last_block_idx:
@@ -2059,13 +2097,13 @@ def extract_requirements_for_range(
         if inter_call_pause_s > 0:
             time.sleep(inter_call_pause_s)
 
-    # Flush a requirement still open at range end (bounded + flagged).
+    # Flush a unit still open at range end (bounded + flagged).
     if pending is not None:
         if verbose:
             print(f"  ! range ended with unit #{pending.sequence} "
                   f"({pending.span_key}) still open; "
                   f"emitting bounded (end_resolved=False)")
-        requirements.append(_finalize_requirement(
+        units.append(_finalize_requirement(
             doc, pending.start, range_end_offset,
             "truncated_at_end", False, pending.start_anchor, pending.end_anchor,
             source_chunk_id=pending.start_chunk_id,
@@ -2092,13 +2130,13 @@ def extract_requirements_for_range(
     if verbose:
         total_calls = sum(len(r.attempts) for r in results)
         ok_calls = sum(1 for r in results for a in r.attempts if a.outcome == "ok")
-        flagged = sum(1 for r in requirements if not r.end_resolved)
+        flagged = sum(1 for r in units if not r.end_resolved)
         print(f"\nDone. {len(results)} batch(es) in {time.time() - wall_start:.1f}s | "
               f"{ok_calls}/{total_calls} ok API call(s) | "
-              f"{len(requirements)} requirement(s) stitched"
+              f"{len(units)} unit(s) stitched"
               + (f" ({flagged} flagged)" if flagged else "") + ".")
 
-    return RangeExtraction(results=results, requirements=requirements)
+    return RangeExtraction(results=results, units=units)
 
 
 # --------------------------------------------------------------------------- #
@@ -2122,7 +2160,8 @@ class FrameworkExtractionStats:
     total_cache_creation_tokens: int
     total_cache_read_tokens: int
 
-    # Output quality (counted from the stitched, document-level requirements)
+    # Output quality (counted from the stitched, document-level units; the
+    # ``requirements`` in these key names is the legacy v0 vocabulary)
     n_requirements_total: int
     n_flagged_requirements: int        # end not anchor-confirmed (end_resolved=False)
 
@@ -2142,7 +2181,7 @@ class FrameworkExtractionStats:
         print(f"  total wall time:         {round(self.total_wall_time_s, 2)}s")
         print(f"  tokens input/output:     {self.total_input_tokens} / {self.total_output_tokens}")
         print(f"  cache creation/read:     {self.total_cache_creation_tokens} / {self.total_cache_read_tokens}")
-        print(f"  requirements (stitched): {self.n_requirements_total}")
+        print(f"  units (stitched):        {self.n_requirements_total}")
         print(f"    flagged (no end):      {self.n_flagged_requirements}")
 
     def to_dict(self) -> dict:
@@ -2152,15 +2191,15 @@ class FrameworkExtractionStats:
 def summarize_extractions(extraction, framework: str = "") -> FrameworkExtractionStats:
     """Aggregate a ``RangeExtraction`` (or a bare list of ``ExtractionResult``)
     into framework-level stats. API/token counters come from the per-chunk
-    results; requirement-quality counters come from the stitched output."""
+    results; unit-quality counters come from the stitched output."""
     from collections import Counter
 
     if isinstance(extraction, RangeExtraction):
         results = extraction.results
-        requirements = extraction.requirements
+        units = extraction.units
     else:
         results = list(extraction)
-        requirements = [r for res in results for r in res.requirements]
+        units = [r for res in results for r in res.chunk_units]
 
     failures_by_outcome: Counter = Counter()
     calls_by_model: Counter = Counter()
@@ -2193,8 +2232,8 @@ def summarize_extractions(extraction, framework: str = "") -> FrameworkExtractio
         total_output_tokens=sum(r.output_tokens for r in results),
         total_cache_creation_tokens=sum(r.cache_creation_tokens for r in results),
         total_cache_read_tokens=sum(r.cache_read_tokens for r in results),
-        n_requirements_total=len(requirements),
-        n_flagged_requirements=sum(1 for r in requirements if not r.end_resolved),
+        n_requirements_total=len(units),
+        n_flagged_requirements=sum(1 for r in units if not r.end_resolved),
         status_counts=dict(status_counts),
     )
 

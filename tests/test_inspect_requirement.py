@@ -5,9 +5,9 @@ from __future__ import annotations
 import unittest
 
 from anchor_extract.anchor_extraction import (
-    ExtractedRequirement,
+    ExtractedUnit,
     ExtractionResult,
-    PendingRequirement,
+    PendingUnit,
     RangeExtraction,
     ResolvedSegment,
     SegmentSpec,
@@ -24,7 +24,7 @@ from anchor_extract.inspect import (
 from tests.test_anchor_id_and_metadata import BODY, make_doc
 
 
-def _req(**overrides) -> ExtractedRequirement:
+def _req(**overrides) -> ExtractedUnit:
     spec = overrides.pop(
         "spec",
         SegmentSpec("§ 160.102", "health plans.", metadata={"req_id": "160.102"}),
@@ -52,12 +52,12 @@ def _req(**overrides) -> ExtractedRequirement:
         source_chunk_ids=[1],
     )
     kwargs.update(overrides)
-    return ExtractedRequirement(**kwargs)
+    return ExtractedUnit(**kwargs)
 
 
-def _result(requirements=None, raw=None, **overrides) -> ExtractionResult:
+def _result(chunk_units=None, raw=None, **overrides) -> ExtractionResult:
     kwargs = dict(
-        requirements=requirements or [],
+        chunk_units=chunk_units or [],
         model_used="test-model",
         input_tokens=100,
         output_tokens=40,
@@ -211,7 +211,7 @@ class TestModelRequirementCarry(unittest.TestCase):
             )],
             0, None, final, len(doc.full_text), chunk_id=1,
         )
-        self.assertIsInstance(pending, PendingRequirement)
+        self.assertIsInstance(pending, PendingUnit)
         self.assertEqual(pending.model_requirement_parts, [opened])
         _stitch_chunk(
             doc,

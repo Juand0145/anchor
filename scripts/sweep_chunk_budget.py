@@ -120,8 +120,8 @@ def main(argv=None) -> int:
     return 0
 
 
-def _source_ids(requirements) -> list:
-    """Identifiers as printed in the source, in requirement order.
+def _source_ids(units) -> list:
+    """Identifiers as printed in the source, in unit order.
 
     Consumer-side read for reporting only: the engine never interprets these
     keys. ``source_ids_in_order`` keeps scanning past a title-only first
@@ -129,7 +129,7 @@ def _source_ids(requirements) -> list:
     """
     from anchor_extract.coverage import source_ids_in_order
 
-    return source_ids_in_order(requirements)
+    return source_ids_in_order(units)
 
 
 def _run_live(args, doc, pattern, budgets) -> int:
@@ -153,7 +153,7 @@ def _run_live(args, doc, pattern, budgets) -> int:
             target_input_tokens=budget,
             verbose=False,
         )
-        ids = _source_ids(extraction.requirements)
+        ids = _source_ids(extraction.units)
         n_in = sum(res.input_tokens for res in extraction.results)
         n_out = sum(res.output_tokens for res in extraction.results)
         run = {

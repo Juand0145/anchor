@@ -94,6 +94,10 @@ extraction = extract_document(
 )
 ```
 
+The stitched deliverable is `extraction.units` (`ExtractedUnit` objects), saved
+with `to_units_json`; `extraction.requirements` and `to_requirements_json` are
+the deprecated v0 names.
+
 See [core_pipeline.md](core_pipeline.md) for the design, [profiles.md](profiles.md)
 for the bundled profiles, and the README quickstart for the full HIPAA example.
 
@@ -101,3 +105,8 @@ Look up a stitched unit by its reading-order id with `get_requirement` or
 `inspect_requirement` (metadata, model anchors, linked LLM calls, resolution).
 `doc=doc.extraction` is optional and adds a single-span `extracted_slice`.
 See [Inspecting a unit by anchor_id](../README.md#inspecting-a-unit-by-anchor_id).
+
+For batch inspection, `extraction.tabular(doc.extraction)` returns four flat
+`list[dict]` views — `segments`, `units`, `anchors`, `calls` — each one a
+`pd.DataFrame` away. `extraction.results` keeps its per-chunk telemetry meaning.
+See [Tabular views](../README.md#tabular-views-notebook--pandas).

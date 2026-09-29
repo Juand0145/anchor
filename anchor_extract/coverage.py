@@ -11,7 +11,7 @@ SOURCE_ID_KEYS = ("req_id", "subcategory_id")
 def _metadata_objects(unit) -> list:
     """Unit-level metadata, then each segment's metadata. Dicts only.
 
-    JSON units (``requirements.json``) carry ``metadata`` plus ``segments[].metadata``.
+    JSON units (``units.json``) carry ``metadata`` plus ``segments[].metadata``.
     In-memory units carry ``segment_anchor_pairs``. Keys inside those dicts are
     not interpreted by the extraction engine.
     """
@@ -45,25 +45,25 @@ def source_id_for_unit(unit):
     return None
 
 
-def source_ids(requirements: list) -> set:
+def source_ids(units: list) -> set:
     """Source identifiers of exported units, read from their ``metadata``.
 
-    Accepts ``requirements.json`` units (dicts) or ``ExtractedRequirement``
-    objects. The id is whatever the profile asked the model to copy into
-    segment metadata, never the exported ``requirement_id``.
+    Accepts JSON units (dicts, from ``units`` or the legacy ``requirements``
+    array) or ``ExtractedUnit`` objects. The id is whatever the profile asked
+    the model to copy into segment metadata, never the exported ``anchor_id``.
     """
     ids = set()
-    for unit in requirements or []:
+    for unit in units or []:
         value = source_id_for_unit(unit)
         if value:
             ids.add(value)
     return ids
 
 
-def source_ids_in_order(requirements) -> list:
+def source_ids_in_order(units) -> list:
     """``source_id_for_unit`` for each unit that has one, in list order."""
     ids = []
-    for unit in requirements or []:
+    for unit in units or []:
         value = source_id_for_unit(unit)
         if value:
             ids.append(value)

@@ -22,35 +22,48 @@ frameworks (NIST AI RMF, HIPAA, …) are **example profiles**, documented in
 | Generic anchor contract (prompt) | `anchor_extract/prompts/anchor.txt` (loaded at import; **not** hardcoded) |
 | Extraction profiles (detection prompts) | `anchor_extract/prompts/profiles/` |
 | Convenience wrapper + JSON helpers | `anchor_extract/pipeline.py` |
-| Trace artifacts (`extraction_run.json`, `requirements.json`) | `anchor_extract/trace_serialization.py` |
+| Trace artifacts (`extraction_run.json`, units deliverable) | `anchor_extract/trace_serialization.py` |
 | Inspection views (`inspect_requirement`, `unit_metadata`) | `anchor_extract/inspect.py` |
+| Tabular views (`tabular_views`, `RangeExtraction.tabular`) | `anchor_extract/tabular.py` |
 | Plain-text ingest | `anchor_extract/ingest.py` |
 | Offline batch plans (no LLM) | `anchor_extract/batch_planning.py` |
 | Phased read API (`anchor.read`, `Document.blocks`) | `anchor/` |
 
 `anchor_demo.ipynb` (repo root) is a walkthrough; the package modules are authoritative.
 
-### API legacy naming (v0)
+### Naming: units (canonical) vs requirements (v0)
 
-Public Python symbols and JSON keys stay requirement-centric. Conceptual terms
-used in this document map as follows:
+Since schema 3.0 the deliverable is called a **unit** in code and JSON. The
+requirement-centric v0 names remain as deprecated, read-only aliases.
 
-| Concept | v0 code / JSON |
+| Concept | Canonical code / JSON | Deprecated v0 alias |
+|---|---|---|
+| Logical unit | `ExtractedUnit` | `ExtractedRequirement` |
+| Stitched deliverable | `RangeExtraction.units` | `.requirements` |
+| Chunk-local units of one call | `ExtractionResult.chunk_units` | `.requirements` |
+| Pending cross-chunk state | `PendingUnit` | `PendingRequirement` |
+| Deliverable builder | `build_units_doc` / `to_units_json` | `build_requirements_doc` / `to_requirements_json` |
+| Deliverable JSON keys | `units`, `n_units` | `requirements`, `n_requirements` |
+
+The aliases are read-only: constructors and builders take the canonical names
+(`RangeExtraction(results, units)`, `ExtractionResult(chunk_units=...)`).
+
+These names are deliberately unchanged, because they are on the LLM wire or in
+the role vocabulary:
+
+| Concept | Code / JSON |
 |---|---|
-| Logical unit | `requirement` / `ExtractedRequirement` |
 | Display id (schema 2.1) | `anchor_id` / `sequence` — 1-based reading order; exported as `requirement_id` |
 | Positional key (schema 2.1) | `span_key` — `generate_span_key`, `{pdf_hash[:12]}:{doc_offset_start}` |
 | Id as printed in the source | segment `metadata` (`req_id`, `subcategory_id`, …) — pass-through, never read by the engine |
 | Extraction profile (detection prompt) | `detection_prompt` argument; composed by `build_anchor_system_prompt` |
 | Profile name in artifacts | `framework_name` / `framework` |
 | Unit-boundary regex | `requirement_boundary_pattern` |
-| Emit-anchors tool | `emit_requirement_anchors` |
-| Primary role text | `original_text` (= `requirement_text`) |
-| Deliverable / trace JSON | `requirements.json` / `extraction_run.json` |
-| Pending cross-chunk state | `PendingRequirement` |
-| Run stats | `FrameworkExtractionStats` |
-
-Do not rename these in v0. This table is documentation only.
+| Emit-anchors tool + payload array | `emit_requirement_anchors`, `{"requirements": [...]}` |
+| Primary role text and segment role | `original_text` (= `requirement_text`), role `"requirement"` |
+| Extraction entry points | `extract_document`, `extract_requirements_for_range`, `extract_requirements_from_chunk` |
+| Trace JSON | `extraction_run.json` |
+| Run stats | `FrameworkExtractionStats` (keys `n_requirements_total`, `n_flagged_requirements`) |
 
 The model supplies no identifiers: `requirement_id` on the wire is deprecated
 and ignored. The engine assigns exactly two ids. `anchor_id` is the 1-based
@@ -149,11 +162,11 @@ PDF
 [7] Validation, roles & provenance         _finalize_requirement, build_role_texts
  |      (slice per segment, group by role, verify invariant, resolve page/bbox, flag)
  v
-RangeExtraction { results (telemetry), requirements (deliverable) }
+RangeExtraction { results (telemetry), units (deliverable) }
  |
  v
-[8] Serialization                          build_extraction_run, build_requirements_doc
-        (extraction_run.json + requirements.json via pipeline helpers)
+[8] Serialization                          build_extraction_run, build_units_doc
+        (extraction_run.json + units.json via pipeline helpers)
 ```
 
 **[1] Text extraction.** `extract_pdf` reads the PDF with PyMuPDF, keeps text
@@ -211,11 +224,11 @@ state that carries resolved segments plus the still-open segment spec.
 units; page/bbox of the bounding start are attached. Anything that does
 not resolve cleanly is emitted but flagged.
 
-**[8] Serialization.** `requirements.json` (lean deliverable, intact per-role
-text + resolved segments) and `extraction_run.json` (full per-call / per-anchor
-trace) are built by `anchor_extract.trace_serialization` and written via
-`pipeline.to_requirements_json`, `pipeline.to_extraction_run_json`, and
-`pipeline.save_json`. See §7.
+**[8] Serialization.** The lean deliverable (intact per-role text + resolved
+segments) and `extraction_run.json` (full per-call / per-anchor trace) are
+built by `anchor_extract.trace_serialization` and written via
+`pipeline.to_units_json` (legacy keys: `pipeline.to_requirements_json`),
+`pipeline.to_extraction_run_json`, and `pipeline.save_json`. See §7.
 
 ---
 
@@ -273,9 +286,9 @@ One resolved span, `(start, end, role)`, in chunk-local coordinates before
 stitching and document coordinates after. The provenance unit for multi-span
 records.
 
-### `ExtractedRequirement`
+### `ExtractedUnit`
 One logical unit, after resolution. Used both for per-chunk detections and for the
-final stitched output. (v0 name remains `ExtractedRequirement`.)
+final stitched output. (`ExtractedRequirement` is the deprecated v0 alias.)
 
 | Field | Purpose |
 |---|---|
@@ -306,7 +319,8 @@ final stitched output. (v0 name remains `ExtractedRequirement`.)
 per-segment slices hold instead.
 
 ### `ExtractionResult`
-Output of one LLM call: `requirements` (chunk-local) plus provenance/telemetry —
+Output of one LLM call: `chunk_units` (chunk-local units; `.requirements` is
+the deprecated read-only alias) plus provenance/telemetry —
 `model_used`, token counts (input/output/cache), `response_time_s`,
 `stop_reason`, `chunk_hash`, `timestamp`, `batch_status`
 (`ok`/`empty`/`overflow`/`verbatim_failure`/`json_error`/`api_error`),
@@ -323,8 +337,9 @@ One record per API attempt (success, retry, or fallback): `model`,
 `connection_error`), `error_message`. Enables exact "how many calls did this
 run cost?" accounting.
 
-### `PendingRequirement`
-A transient record the orchestrator holds while a unit spans chunks.
+### `PendingUnit`
+A transient record the orchestrator holds while a unit spans chunks
+(`PendingRequirement` is the deprecated v0 alias).
 Offsets are the source of truth: `start` (document offset) and, for multi-span,
 `segments` (resolved doc segments so far) + `segment_anchor_pairs` (full spec) +
 `n_segments` + `segments_partial`. Also carries `start_anchor`, `end_anchor`,
@@ -333,7 +348,9 @@ unit exists at a time.
 
 ### `RangeExtraction`
 The orchestrator's return value: `results` (per-chunk `ExtractionResult`s for
-telemetry) and `requirements` (the stitched, document-level deliverable).
+telemetry) and `units` (the stitched, document-level deliverable;
+`.requirements` is the deprecated read-only alias). `.tabular(doc)` projects it
+into flat rows.
 
 ---
 
@@ -591,17 +608,21 @@ wall time, token totals, per-batch `status_counts`, and unit quality
 
 This package writes **JSON only**. Use `anchor_extract.pipeline`:
 
-- `to_requirements_json(framework_name, doc, extraction)` → lean deliverable
+- `to_units_json(framework_name, doc, extraction)` → lean deliverable
+  (`units` / `n_units`, schema 3.0)
+- `to_requirements_json(...)` → the same document with the deprecated
+  `requirements` / `n_requirements` keys
 - `to_extraction_run_json(framework_name, doc, extraction, ...)` → full trace
 - `save_json(obj, path)` → write either artifact to disk
 
-Default output location in the demo notebook is `outputs/requirements.json`.
+Default output location in the demo notebook is `outputs/requirements.json`
+(the file name is unchanged; only the keys inside moved to `units`).
 
 Chunk text is **not** stored in the JSON. Offsets + hashes plus the source PDF
 and `DocumentExtraction.blocks` are enough to reproduce a slice. Body text lives
-only in `requirements.json`.
+only in the deliverable.
 
-- **`requirements.json`** — lean deliverable: per unit `uid`,
+- **deliverable (`units.json` / `requirements.json`)** — per unit `uid`,
   `requirement_id` (= `anchor_id` = reading-order number), `sequence`,
   `span_key`, `metadata`,
   `title`, `extracted_text` (= `requirement_text`), the three
@@ -680,7 +701,7 @@ mirrors it for validation but is not authoritative.
 
 | Stage | Symbols | Location |
 |---|---|---|
-| Data model | `TextBlock`, `PageInfo`, `DocumentExtraction`, `SegmentSpec`, `ResolvedSegment`, `ExtractedRequirement`, `PendingRequirement`, `RangeExtraction` | `anchor_extract/anchor_extraction.py` |
+| Data model | `TextBlock`, `PageInfo`, `DocumentExtraction`, `SegmentSpec`, `ResolvedSegment`, `ExtractedUnit`, `PendingUnit`, `RangeExtraction` | `anchor_extract/anchor_extraction.py` |
 | Roles | `ROLE_REQUIREMENT`/`ROLE_QUESTIONNAIRE`/`ROLE_CONTEXT`, `SEGMENT_SEPARATOR`, `_normalize_role`, `build_role_texts`, `_join_role_slices` | `anchor_extract/anchor_extraction.py` |
 | Extraction + normalization + reading order | `extract_pdf`, `_normalize_block_text`, `_reading_order_blocks` | `anchor_extract/pdf_extraction.py` |
 | LLM client / model fallback chain | `get_anthropic_client`, `_build_model_chain` | `anchor_extract/llm_client.py` |
@@ -694,9 +715,10 @@ mirrors it for validation but is not authoritative.
 | Unit-aware chunking + budget | `_estimate_tokens`, `compute_input_token_budget`, `_compute_boundary_blocks`, `_build_batch` | `anchor_extract/anchor_extraction.py` |
 | Orchestrator + stitch + finalize | `extract_requirements_for_range`, `_stitch_chunk`, `_finalize_requirement`, `_finalize_from_chunk_requirement`, `_doc_segments_from_chunk_req` | `anchor_extract/anchor_extraction.py` |
 | Telemetry | `summarize_extractions`, `FrameworkExtractionStats` | `anchor_extract/anchor_extraction.py` |
-| Pipeline wrapper + JSON helpers | `extract_document`, `to_requirements_json`, `to_extraction_run_json`, `save_json` | `anchor_extract/pipeline.py` |
-| Trace serialization | `build_extraction_run`, `build_requirements_doc`, `_requirement_warnings`, `_serialize_segment_specs`, `_serialize_resolved_segments` | `anchor_extract/trace_serialization.py` |
+| Pipeline wrapper + JSON helpers | `extract_document`, `to_units_json`, `to_requirements_json`, `to_extraction_run_json`, `save_json` | `anchor_extract/pipeline.py` |
+| Trace serialization | `build_extraction_run`, `build_units_doc`, `build_requirements_doc`, `_requirement_warnings`, `_serialize_segment_specs`, `_serialize_resolved_segments` | `anchor_extract/trace_serialization.py` |
 | Inspection | `inspect_requirement`, `get_requirement`, `unit_metadata`, `segment_metadatas` | `anchor_extract/inspect.py` |
+| Tabular views (`segments`, `units`, `anchors`, `calls` rows) | `tabular_views`, `segment_rows`, `unit_rows`, `anchor_rows`, `call_rows` | `anchor_extract/tabular.py` |
 | Plain-text ingest | `extract_text` | `anchor_extract/ingest.py` |
 | Offline batch plans | `plan_batches`, `summarize_batch_plan` | `anchor_extract/batch_planning.py` |
 | Phased public read | `read`, `Document`, `blocks` | `anchor/` |

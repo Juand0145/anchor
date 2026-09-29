@@ -41,7 +41,7 @@ def get_requirement(extraction, anchor_id):
         wanted_str = str(anchor_id).strip()
         if wanted_str.isdigit():
             wanted_seq = int(wanted_str)
-    for req in getattr(extraction, "requirements", None) or []:
+    for req in getattr(extraction, "units", None) or []:
         if wanted_seq is not None and getattr(req, "sequence", None) == wanted_seq:
             return req
         if getattr(req, "anchor_id", None) == wanted_str:
@@ -76,7 +76,7 @@ def _fallback_model_item(res, requirement):
     """Fallback only: match a raw tool item by the first segment start_anchor.
 
     Production units carry ``model_requirement_parts`` from the chunk builder.
-    This scan is for requirements that only have ``ExtractionResult.raw_payload``.
+    This scan is for units that only have ``ExtractionResult.raw_payload``.
     """
     payload = getattr(res, "raw_payload", None)
     if not isinstance(payload, dict):

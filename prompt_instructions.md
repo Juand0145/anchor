@@ -134,7 +134,7 @@ detection_prompt = Path("anchor_extract/prompts/profiles/hipaa.txt").read_text(e
 system_prompt = build_anchor_system_prompt(detection_prompt)
 ```
 
-### Identifiers (schema 2.2)
+### Identifiers (schema 3.0)
 
 The engine assigns two ids and reads none:
 

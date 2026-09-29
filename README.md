@@ -21,10 +21,25 @@ Bundled examples are HIPAA Administrative Simplification (the primary
 walkthrough) and the NIST AI RMF Playbook. Compliance is an **example domain**,
 not the product definition.
 
-v0 public names stay requirement-centric (`extract_document`, `requirement_id`,
-`requirements.json`). See the mapping table in [docs/core_pipeline.md](docs/core_pipeline.md).
+The canonical name for the deliverable is **unit**: `extraction.units` of
+`ExtractedUnit`, exported by `to_units_json` under the `units` key. The v0
+requirement-centric names still work as deprecated aliases:
 
-JSON artifacts are `schema_version` **2.2**: `anchor_id` (exported as
+| Canonical (3.0) | Deprecated alias (v0) |
+|---|---|
+| `extraction.units` | `extraction.requirements` |
+| `ExtractedUnit`, `PendingUnit` | `ExtractedRequirement`, `PendingRequirement` |
+| `to_units_json`, `build_units_doc` | `to_requirements_json`, `build_requirements_doc` |
+| JSON `units` / `n_units` | JSON `requirements` / `n_requirements` |
+| `ExtractionResult.chunk_units` | `.requirements` (read-only) |
+
+The aliases are read-only: constructors take `units` and `chunk_units`. Names
+left untouched on purpose: `extract_document`, the LLM tool
+`emit_requirement_anchors` and its `requirements` payload array, the
+`requirement` segment role, and `requirement_text`. See the mapping table in
+[docs/core_pipeline.md](docs/core_pipeline.md).
+
+JSON artifacts are `schema_version` **3.0**: `anchor_id` (exported as
 `requirement_id` too) is the 1-based reading-order number of the unit and
 `span_key` is the positional key `{pdf_hash[:12]}:{doc_offset_start}` used for
 dedup. Those are the only ids the engine assigns; the identifier printed in the
@@ -87,7 +102,7 @@ pages and boundary pattern below match `anchor_demo.ipynb`:
 from pathlib import Path
 from dotenv import load_dotenv
 import anchor
-from anchor_extract import extract_document, to_requirements_json, save_json
+from anchor_extract import extract_document, to_units_json, save_json
 from anchor_extract.settings import EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN
 
 load_dotenv()
@@ -100,15 +115,15 @@ extraction = extract_document(
     requirement_boundary_pattern=EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN,
 )
 
-for req in extraction.requirements:
-    if not req.verbatim_match:
+for unit in extraction.units:
+    if not unit.verbatim_match:
         continue
-    print(req.anchor_id, req.requirement_text[:80].strip())
-    if req.n_segments == 1 and req.doc_offset_start >= 0:
-        ok = doc.full_text[req.doc_offset_start:req.doc_offset_end] == req.original_text
+    print(unit.anchor_id, unit.requirement_text[:80].strip())
+    if unit.n_segments == 1 and unit.doc_offset_start >= 0:
+        ok = doc.full_text[unit.doc_offset_start:unit.doc_offset_end] == unit.original_text
         print("  invariant:", "ok" if ok else "BAD")
 
-save_json(to_requirements_json("hipaa", doc.extraction, extraction), "outputs/requirements.json")
+save_json(to_units_json("hipaa", doc.extraction, extraction), "outputs/units.json")
 ```
 
 Profile file: [`anchor_extract/prompts/profiles/hipaa.txt`](anchor_extract/prompts/profiles/hipaa.txt).
@@ -140,6 +155,38 @@ print(view["model_anchors"]["start_anchor"], view["llm_calls"][0]["chunk_id"])
 `llm_calls` (one entry per `source_chunk_ids`), and `resolution` (offsets,
 flags, warnings, and `extracted_slice` for a single span when `doc` is passed).
 `segment_metadatas(req)` is the per-segment list in spec order.
+
+## Tabular views (notebook / pandas)
+
+`extraction.tabular(doc)` (or `tabular_views(extraction, doc)`) projects a
+stitched extraction into four lists of plain dicts — one row per thing, same
+keys in every row:
+
+| Key | One row per | Columns |
+|---|---|---|
+| `segments` | resolved segment (the **content**) | `anchor_id`, `segment_index`, `role`, `text`, `metadata`, `doc_offset_start/end`, `page_start` |
+| `units` | stitched unit (the **info**) | ids, `status`, `verbatim_match`, `end_*` flags, segment counts, offsets, `source_chunk_id(s)`, `warnings` |
+| `anchors` | segment spec the model emitted | `start_anchor`, `end_anchor`, `end_before_anchor`, `start_after_anchor`, `role`, `metadata` |
+| `calls` | LLM call (the **payload**) | `chunk_id`, `model_used`, token counts, `stop_reason`, `batch_*`, `page_range`, `model_items` |
+
+```python
+import pandas as pd
+
+views = extraction.tabular(doc.extraction)   # doc optional
+pd.DataFrame(views["units"])
+pd.DataFrame(views["segments"])[["anchor_id", "role", "text"]]
+```
+
+`doc` is optional (a `Document` or a `DocumentExtraction`) and only adds
+segment `text`, `page_start` and call `page_range`. An empty extraction gives
+four empty lists. `calls` never carries the chunk user-message text.
+
+`extraction.results` is unchanged: it is still the list of per-chunk
+`ExtractionResult` telemetry objects (whose chunk-local units are
+`.chunk_units`). `calls` is a flat projection of it, and the `units` view is a
+projection of `extraction.units`.
+pandas is only needed for the `DataFrame` step; the views themselves are
+`list[dict]` and the package does not depend on pandas.
 
 ## How to write an extraction profile
 
@@ -187,7 +234,7 @@ Docs index: [docs/README.md](docs/README.md). The previous path
   profiles are tuned for **English** regulatory prose; that is a profile limit,
   not a core-engine limit.
 - The stitcher supports **one pending unit** at a time (forward-only, no
-  jumpback; v0 type: `PendingRequirement`).
+  jumpback; type: `PendingUnit`).
 
 ## License
 

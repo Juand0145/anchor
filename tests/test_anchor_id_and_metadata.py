@@ -1,4 +1,4 @@
-"""Schema 2.2: engine ids (sequence, span_key) and opaque segment metadata."""
+"""Schema 3.0: engine ids (sequence, span_key), opaque metadata, units vocabulary."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ import warnings
 from anchor_extract import anchor_extraction
 from anchor_extract.anchor_extraction import (
     ANCHOR_INPUT_SCHEMA,
-    ExtractedRequirement,
-    PendingRequirement,
+    ExtractedUnit,
+    ExtractionResult,
+    PendingUnit,
     RangeExtraction,
     ResolvedSegment,
     SegmentSpec,
@@ -24,6 +25,7 @@ from anchor_extract.trace_serialization import (
     _requirement_warnings,
     _serialize_segment_specs,
     build_requirements_doc,
+    build_units_doc,
 )
 
 BODY = "§ 160.102 Applicability. This subchapter applies to health plans."
@@ -77,7 +79,7 @@ class TestEngineHoldsNoDomainId(unittest.TestCase):
             self.assertFalse(hasattr(anchor_extraction, name), name)
 
     def test_requirement_has_no_domain_fields(self):
-        req = ExtractedRequirement(
+        req = ExtractedUnit(
             original_text="x", start_anchor=None, end_anchor=None,
             status="complete", verbatim_match=True,
             chunk_offset_start=0, chunk_offset_end=1,
@@ -88,7 +90,7 @@ class TestEngineHoldsNoDomainId(unittest.TestCase):
             self.assertFalse(hasattr(req, name), name)
 
     def test_requirement_id_is_the_display_id(self):
-        req = ExtractedRequirement(
+        req = ExtractedUnit(
             original_text="x", start_anchor=None, end_anchor=None,
             status="complete", verbatim_match=True,
             chunk_offset_start=0, chunk_offset_end=1,
@@ -99,7 +101,7 @@ class TestEngineHoldsNoDomainId(unittest.TestCase):
         self.assertEqual(req.requirement_id, "3")
 
     def test_pending_has_no_domain_id(self):
-        pending = PendingRequirement(start=0, start_anchor="a", sequence=1)
+        pending = PendingUnit(start=0, start_anchor="a", sequence=1)
         self.assertFalse(hasattr(pending, "business_id"))
 
 
@@ -137,7 +139,7 @@ class TestSerializeSegmentSpecs(unittest.TestCase):
         self.assertEqual(rows[0]["role"], "requirement")
 
 
-class TestRequirementsDocExport(unittest.TestCase):
+class TestUnitsDocExport(unittest.TestCase):
     def build(self, **overrides):
         doc = make_doc()
         spec = SegmentSpec("§ 160.102", "health plans.", role="requirement",
@@ -165,25 +167,32 @@ class TestRequirementsDocExport(unittest.TestCase):
             source_chunk_ids=[1],
         )
         kwargs.update(overrides)
-        req = ExtractedRequirement(**kwargs)
-        return build_requirements_doc("hipaa", "run#1", doc, RangeExtraction([], [req]))
+        req = ExtractedUnit(**kwargs)
+        return build_units_doc("hipaa", "run#1", doc, RangeExtraction([], [req]))
 
-    def test_schema_version_is_2_2(self):
-        self.assertEqual(SCHEMA_VERSION, "2.2")
-        self.assertEqual(self.build()["schema_version"], "2.2")
+    def test_schema_version_is_3_0(self):
+        self.assertEqual(SCHEMA_VERSION, "3.0")
+        self.assertEqual(self.build()["schema_version"], "3.0")
+
+    def test_top_level_keys_are_units(self):
+        payload = self.build()
+        self.assertEqual(payload["n_units"], 1)
+        self.assertEqual(len(payload["units"]), 1)
+        self.assertNotIn("requirements", payload)
+        self.assertNotIn("n_requirements", payload)
 
     def test_requirement_id_is_the_sequence(self):
-        unit = self.build()["requirements"][0]
+        unit = self.build()["units"][0]
         self.assertEqual(unit["requirement_id"], "1")
         self.assertEqual(unit["anchor_id"], "1")
         self.assertEqual(unit["sequence"], 1)
         self.assertEqual(unit["span_key"], "a322e3195123:0")
 
     def test_no_business_id_key(self):
-        self.assertNotIn("business_id", self.build()["requirements"][0])
+        self.assertNotIn("business_id", self.build()["units"][0])
 
     def test_metadata_round_trips_untouched(self):
-        unit = self.build()["requirements"][0]
+        unit = self.build()["units"][0]
         self.assertEqual(unit["metadata"], {"req_id": "160.102", "title": "Applicability."})
         self.assertEqual(unit["segments"][0]["metadata"], unit["metadata"])
         self.assertEqual(
@@ -192,13 +201,13 @@ class TestRequirementsDocExport(unittest.TestCase):
 
     def test_title_needs_no_metadata(self):
         unit = self.build(original_text="Applicability. Applies to plans.",
-                          segment_anchor_pairs=[])["requirements"][0]
+                          segment_anchor_pairs=[])["units"][0]
         self.assertEqual(unit["title"], "Applicability")
         self.assertEqual(unit["metadata"], {})
 
     def test_unresolved_start_has_no_display_id(self):
         unit = self.build(sequence=0, span_key="", doc_offset_start=-1,
-                          segments=[])["requirements"][0]
+                          segments=[])["units"][0]
         self.assertEqual(unit["requirement_id"], "")
         self.assertEqual(unit["anchor_id"], "")
         self.assertEqual(unit["sequence"], 0)
@@ -208,18 +217,56 @@ class TestRequirementsDocExport(unittest.TestCase):
         unit = self.build(segments=[
             ResolvedSegment(0, 10, "requirement"),
             ResolvedSegment(11, 20, "context"),
-        ])["requirements"][0]
+        ])["units"][0]
         self.assertIsNone(unit["segments"][0]["metadata"])
 
     def test_no_identifier_warnings(self):
-        warnings = self.build(segment_anchor_pairs=[])["requirements"][0]["validation"]["warnings"]
+        warnings = self.build(segment_anchor_pairs=[])["units"][0]["validation"]["warnings"]
         for key in ("empty_business_id", "metadata_id_mismatch", "id_mismatch"):
             self.assertNotIn(key, warnings)
 
 
+class TestLegacyNames(unittest.TestCase):
+    """v0 vocabulary keeps working: aliased types, attributes and JSON keys."""
+
+    def test_class_aliases(self):
+        self.assertIs(anchor_extraction.ExtractedRequirement, ExtractedUnit)
+        self.assertIs(anchor_extraction.PendingRequirement, PendingUnit)
+
+    def test_range_extraction_requirements_is_units(self):
+        extraction = RangeExtraction([], [])
+        extraction.units = ["a"]
+        self.assertIs(extraction.requirements, extraction.units)
+
+    def test_extraction_result_requirements_is_chunk_units(self):
+        res = ExtractionResult(
+            chunk_units=["a"], model_used=None, input_tokens=0, output_tokens=0,
+            cache_creation_tokens=0, cache_read_tokens=0, response_time_s=0.0,
+            stop_reason="end_turn", chunk_hash="h", timestamp="t",
+        )
+        self.assertIs(res.requirements, res.chunk_units)
+
+    def test_requirements_doc_keeps_the_legacy_keys(self):
+        doc = make_doc()
+        req = ExtractedUnit(
+            original_text=BODY, start_anchor=None, end_anchor=None,
+            status="complete", verbatim_match=True,
+            chunk_offset_start=0, chunk_offset_end=len(BODY),
+            doc_offset_start=0, doc_offset_end=len(BODY), page=1, bbox=None,
+            sequence=1,
+        )
+        extraction = RangeExtraction([], [req])
+        legacy = build_requirements_doc("hipaa", "run#1", doc, extraction)
+        units = build_units_doc("hipaa", "run#1", doc, extraction)
+        self.assertEqual(legacy["schema_version"], "3.0")
+        self.assertEqual(legacy["n_requirements"], 1)
+        self.assertEqual(legacy["requirements"], units["units"])
+        self.assertNotIn("units", legacy)
+
+
 class TestRequirementWarningsHelper(unittest.TestCase):
     def test_flags_resolution_only(self):
-        req = ExtractedRequirement(
+        req = ExtractedUnit(
             original_text="", start_anchor=None, end_anchor=None,
             status="complete", verbatim_match=False,
             chunk_offset_start=-1, chunk_offset_end=-1,
@@ -250,10 +297,10 @@ class TestStitchContinuation(unittest.TestCase):
             bbox=None,
         )
         kwargs.update(overrides)
-        return ExtractedRequirement(**kwargs)
+        return ExtractedUnit(**kwargs)
 
     def make_pending(self):
-        return PendingRequirement(
+        return PendingUnit(
             start=0,
             start_anchor="§ 160.102",
             sequence=1,
@@ -325,7 +372,7 @@ class TestSequentialNumbering(unittest.TestCase):
             segment_anchor_pairs=[SegmentSpec("a", "b", metadata=metadata)],
         )
         kwargs.update(overrides)
-        return ExtractedRequirement(**kwargs)
+        return ExtractedUnit(**kwargs)
 
     def test_two_units_numbered_one_and_two(self):
         doc = make_doc()

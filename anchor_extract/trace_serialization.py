@@ -5,13 +5,14 @@ Builds two JSON artifacts from a ``RangeExtraction``:
 * ``extraction_run.json`` -- FULL execution trace: run + document + model
   metadata, and for every chunk the call telemetry, the anchors the model
   returned, and how each anchor resolved. This is the debugging surface.
-* ``requirements.json`` -- the LEAN deliverable: the final stitched units
-  with just enough traceability (run id, page, requirement id, anchors, source
-  chunk) to link each one back to its extraction call in the run file.
+* ``units.json`` -- the LEAN deliverable: the final stitched units
+  with just enough traceability (run id, page, anchor id, anchors, source
+  chunk) to link each one back to its extraction call in the run file. The
+  legacy filename and shape is ``requirements.json`` (see schema 3.0 below).
 
 Design rule: store offsets + hashes, never the raw chunk text (it is fully
 reproducible from the PDF + ``DocumentExtraction.blocks``). Body text lives
-only in ``requirements.json``. Optional/noisy fields (attempts, malformed
+only in the deliverable. Optional/noisy fields (attempts, malformed
 items) are emitted only when non-empty.
 
 ID model:
@@ -19,7 +20,7 @@ ID model:
     run_id             = "<UTC compact>Z-<pdf_hash[:8]>"   e.g. 20260609T140801Z-a322e319
     chunk_id           = 1-based ordinal of the chunk in RangeExtraction.results
     extraction_call_id = "<run_id>#c<chunk_id>"
-    requirement uid    = "<run_id>#r<NNNN>"
+    unit uid           = "<run_id>#r<NNNN>"
     anchor_id          = "1", "2", "3", ...  (1-based reading order)
     span_key           = "<pdf_hash[:12]>:<doc_offset_start>"  (positional key)
 
@@ -52,6 +53,19 @@ Schema 2.2 changes vs 2.1:
 * ``missing_section_ids`` / the ``missing_section`` call warning are gone from
   the trace; heading-coverage checks belong to consumers of the artifacts.
 * ``totals`` no longer reports ``n_id_mismatches`` or ``n_missing_section_ids``.
+
+Schema 3.0 changes vs 2.2 (vocabulary only; no unit object changed):
+
+* The deliverable's top-level keys are ``units`` and ``n_units``. Every element
+  of ``units`` has the exact shape of a 2.2 ``requirements`` element
+  (``anchor_id``, ``requirement_id``, ``metadata``, ``segments``, ...).
+* ``build_units_doc`` is the primary builder. ``build_requirements_doc`` still
+  works: it emits the same document with the legacy keys ``requirements`` /
+  ``n_requirements`` and ``schema_version`` 3.0.
+* Migration for a consumer of ``requirements.json``: read
+  ``doc.get("units", doc.get("requirements"))``.
+* The LLM wire contract is untouched: the tool array is still named
+  ``requirements``.
 """
 
 import re
@@ -65,7 +79,7 @@ from .anchor_extraction import (
     _coerce_resolved_segment,
 )
 
-SCHEMA_VERSION = "2.2"
+SCHEMA_VERSION = "3.0"
 
 
 def _now_iso() -> str:
@@ -218,7 +232,7 @@ def _serialize_resolved_segments_with_doc(doc, batch_offset_start, segments) -> 
 def _chunk_block(doc, run_id, ordinal, res):
     """One chunk entry for extraction_run.json (call + per-anchor resolution)."""
     anchors = []
-    for i, r in enumerate(res.requirements):
+    for i, r in enumerate(res.chunk_units):
         seg_list = getattr(r, "segments", []) or []
         anchors.append({
             "idx": i,
@@ -267,7 +281,7 @@ def _chunk_block(doc, run_id, ordinal, res):
         call["attempts"] = [asdict(a) for a in res.attempts]
 
     model_output = {
-        "n_returned": len(res.requirements),
+        "n_returned": len(res.chunk_units),
         "n_malformed": len(res.malformed_items),
         "anchors": anchors,
     }
@@ -324,10 +338,10 @@ def build_extraction_run(framework, run_id, doc, extraction, stats,
     }
 
 
-def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
-    """Assemble the lean requirements deliverable."""
+def build_units_doc(framework, run_id, doc, extraction) -> dict:
+    """Assemble the lean units deliverable (schema 3.0: ``units``/``n_units``)."""
     reqs = []
-    for k, q in enumerate(extraction.requirements):
+    for k, q in enumerate(extraction.units):
         chunk_id = getattr(q, "source_chunk_id", -1)
         spans = getattr(q, "source_chunk_ids", []) or ([chunk_id] if chunk_id >= 0 else [])
         end_off = q.doc_offset_end
@@ -400,6 +414,18 @@ def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
         "document_id": doc.pdf_hash,
         "framework": framework,
         "generated_at": _now_iso(),
-        "n_requirements": len(reqs),
-        "requirements": reqs,
+        "n_units": len(reqs),
+        "units": reqs,
     }
+
+
+def build_requirements_doc(framework, run_id, doc, extraction) -> dict:
+    """Deprecated v0 builder: ``build_units_doc`` under the legacy key names.
+
+    Identical document, with ``units``/``n_units`` renamed back to
+    ``requirements``/``n_requirements``. Unit objects are unchanged.
+    """
+    payload = build_units_doc(framework, run_id, doc, extraction)
+    payload["n_requirements"] = payload.pop("n_units")
+    payload["requirements"] = payload.pop("units")
+    return payload

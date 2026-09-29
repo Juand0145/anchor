@@ -1,7 +1,9 @@
 """anchor-extract: verifiable PDF span extraction via verbatim boundary anchors.
 
 Core engine (anchors, not bodies) plus extraction profiles that define which
-logical units to extract. v0 public names remain requirement-centric.
+logical units to extract. The stitched deliverable is ``RangeExtraction.units``
+(``ExtractedUnit`` objects); the v0 requirement-centric names are kept as
+deprecated aliases.
 """
 
 from .coverage import source_id_for_unit, source_ids
@@ -10,9 +12,11 @@ from .anchor_extraction import (
     ANCHOR_SYSTEM_PROMPT_GENERIC,
     ANCHOR_TOOL_NAME,
     ExtractedRequirement,
+    ExtractedUnit,
     ExtractionResult,
     FrameworkExtractionStats,
     PendingRequirement,
+    PendingUnit,
     RangeExtraction,
     ResolvedSegment,
     SegmentSpec,
@@ -36,10 +40,13 @@ from .pipeline import (
     save_json,
     to_extraction_run_json,
     to_requirements_json,
+    to_units_json,
 )
+from .tabular import tabular_views
 from .trace_serialization import (
     build_extraction_run,
     build_requirements_doc,
+    build_units_doc,
     make_run_id,
 )
 
@@ -50,18 +57,24 @@ __all__ = [
     "ANCHOR_SYSTEM_PROMPT_GENERIC",
     "ANCHOR_TOOL_NAME",
     "DocumentExtraction",
+    # ExtractedRequirement / PendingRequirement are deprecated aliases of
+    # ExtractedUnit / PendingUnit.
     "ExtractedRequirement",
+    "ExtractedUnit",
     "ExtractionResult",
     "FrameworkExtractionStats",
     "PendingRequirement",
+    "PendingUnit",
     "RangeExtraction",
     "ResolvedSegment",
     "SegmentSpec",
     "TextBlock",
     "build_anchor_system_prompt",
     "build_extraction_run",
+    # build_requirements_doc is the legacy-key form of build_units_doc.
     "build_requirements_doc",
     "build_role_texts",
+    "build_units_doc",
     "extract_document",
     "extract_pdf",
     "extract_requirements_for_range",
@@ -78,7 +91,10 @@ __all__ = [
     "source_id_for_unit",
     "source_ids",
     "summarize_extractions",
+    "tabular_views",
     "to_extraction_run_json",
+    # to_requirements_json is the legacy-key form of to_units_json.
     "to_requirements_json",
+    "to_units_json",
     "unit_metadata",
 ]
