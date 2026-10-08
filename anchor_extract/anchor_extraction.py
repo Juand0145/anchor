@@ -45,7 +45,6 @@ SEGMENT_SEPARATOR = "\n\n"
 ROLE_REQUIREMENT = "requirement"
 ROLE_QUESTIONNAIRE = "questionnaire"
 ROLE_CONTEXT = "context"
-VALID_SEGMENT_ROLES = frozenset({ROLE_REQUIREMENT, ROLE_QUESTIONNAIRE, ROLE_CONTEXT})
 
 
 def generate_span_key(doc: Optional[DocumentExtraction], doc_offset_start: int) -> str:
@@ -712,40 +711,6 @@ def _clip_overlapping_segments(segments: list) -> tuple:
             seg = ResolvedSegment(new_start, seg.end, seg.role)
         clipped.append(seg)
     return clipped, partial
-
-
-def _resolve_anchors(norm: str, idx_map: list, start_anchor: Optional[str],
-                     end_anchor: Optional[str],
-                     allow_prefix_fallback: bool = True) -> tuple:
-    """Resolve a SINGLE requirement's boundary anchors against a PRECOMPUTED
-    normalized chunk, with no ordering context. Returns (start_off, end_off,
-    start_found, end_found, start_via_fallback) as chunk-local offsets.
-
-    Kept as a primitive; the production path uses ``_resolve_chunk_anchors``,
-    which adds the previous/next ordering window. ``end_off`` is exclusive and
-    INCLUDES the end anchor text. The end anchor is searched strictly AFTER the
-    start, exact-only (trimming its tail would silently drop requirement text).
-    """
-    start_off, end_off = -1, -1
-    start_found = end_found = False
-    start_via_fallback = False
-    search_from = 0
-
-    s = _find_anchor_raw(norm, idx_map, start_anchor)
-    if s is None and start_anchor and allow_prefix_fallback:
-        s = _find_anchor_unique_prefix(norm, idx_map, start_anchor)
-        if s is not None:
-            start_via_fallback = True
-    if s is not None:
-        start_off, search_from = s[0], s[3]
-        start_found = True
-
-    e = _find_anchor_raw(norm, idx_map, end_anchor, from_norm=search_from)
-    if e is not None:
-        end_off = e[1]
-        end_found = True
-
-    return (start_off, end_off, start_found, end_found, start_via_fallback)
 
 
 @dataclass
@@ -2167,22 +2132,6 @@ class FrameworkExtractionStats:
 
     # Per-batch explicit status counts (ok / empty / verbatim_failure / json_error / api_error)
     status_counts: dict = field(default_factory=dict)
-
-    def print_summary(self) -> None:
-        print(f"=== Framework: {self.framework or '<unset>'} ===")
-        print(f"  chunks processed:        {self.n_chunks_processed}")
-        print(f"  total API calls:         {self.n_total_api_calls}")
-        print(f"    successful:            {self.n_successful_calls}")
-        print(f"    failed:                {self.n_failed_calls}")
-        if self.failures_by_outcome:
-            print(f"    failures by outcome:   {dict(self.failures_by_outcome)}")
-        print(f"  calls by model (ok):     {dict(self.calls_by_model)}")
-        print(f"  batch status counts:     {dict(self.status_counts)}")
-        print(f"  total wall time:         {round(self.total_wall_time_s, 2)}s")
-        print(f"  tokens input/output:     {self.total_input_tokens} / {self.total_output_tokens}")
-        print(f"  cache creation/read:     {self.total_cache_creation_tokens} / {self.total_cache_read_tokens}")
-        print(f"  units (stitched):        {self.n_requirements_total}")
-        print(f"    flagged (no end):      {self.n_flagged_requirements}")
 
     def to_dict(self) -> dict:
         return asdict(self)

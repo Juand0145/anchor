@@ -68,14 +68,12 @@ Schema 3.0 changes vs 2.2 (vocabulary only; no unit object changed):
   ``requirements``.
 """
 
-import re
 import datetime
 from dataclasses import asdict
 from pathlib import Path
 
 from .anchor_extraction import (
     SegmentSpec,
-    ResolvedSegment,
     _coerce_resolved_segment,
 )
 
@@ -212,7 +210,7 @@ def _serialize_resolved_segments(segments) -> list:
     return out
 
 
-def _serialize_resolved_segments_with_doc(doc, batch_offset_start, segments) -> list:
+def _serialize_resolved_segments_with_offsets(batch_offset_start, segments) -> list:
     """Chunk-local resolved segments with doc offsets for extraction_run.json."""
     rows = []
     for seg in segments or []:
@@ -250,8 +248,8 @@ def _chunk_block(doc, run_id, ordinal, res):
                 "end_found": r.chunk_offset_end >= 0,
                 "chunk_offset": [r.chunk_offset_start, r.chunk_offset_end],
                 "doc_offset": [r.doc_offset_start, r.doc_offset_end],
-                "segments": _serialize_resolved_segments_with_doc(
-                    doc, res.batch_doc_offset_start, seg_list,
+                "segments": _serialize_resolved_segments_with_offsets(
+                    res.batch_doc_offset_start, seg_list,
                 ),
                 "n_segments": getattr(r, "n_segments", 1),
                 "n_segments_resolved": getattr(r, "n_segments_resolved", 0),

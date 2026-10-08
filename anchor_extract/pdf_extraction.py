@@ -88,12 +88,6 @@ class DocumentExtraction:
             return {"page": None, "bbox": None, "block_no": None}
         return {"page": b.page, "bbox": b.bbox, "block_no": b.block_no}
 
-    def page_text(self, page_num: int) -> str:
-        for p in self.pages:
-            if p.page_num == page_num:
-                return self.full_text[p.char_start:p.char_end]
-        return ""
-
     def summary(self) -> dict:
         return {
             "pdf": Path(self.pdf_path).name,
@@ -170,7 +164,7 @@ def _should_drop_block(
     return False
 
 
-def _sort_body_columns(body: list, page_width: float, page_height: float,
+def _sort_body_columns(body: list, page_width: float,
                        col_tol: float = 50.0) -> list:
     if not body:
         return body
@@ -218,7 +212,7 @@ def _reading_order_blocks(blocks: list, page_width: float, page_height: float,
         return blocks
 
     header, body, footer = _classify_margin_bands(blocks, page_height)
-    body = _sort_body_columns(body, page_width, page_height, col_tol)
+    body = _sort_body_columns(body, page_width, col_tol)
     header.sort(key=lambda b: (b[1], b[0]))
     footer.sort(key=lambda b: (b[1], b[0]))
     return header + body + footer
@@ -288,7 +282,7 @@ def extract_pdf(pdf_path,
         if detect_columns:
             raw_blocks = [b for b in page.get_text("blocks") if b[6] == 0]
             header, body, footer = _classify_margin_bands(raw_blocks, page_h)
-            body = _sort_body_columns(body, page_w, page_h)
+            body = _sort_body_columns(body, page_w)
             header.sort(key=lambda b: (b[1], b[0]))
             footer.sort(key=lambda b: (b[1], b[0]))
             if drop_margin_blocks:

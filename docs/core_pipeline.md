@@ -263,8 +263,7 @@ The single source of truth for everything downstream.
 | `parser`, `parser_version`, `start_page`, `end_page`, `total_pages_in_pdf` | Provenance |
 
 Methods: `text_in_range`, `block_at_offset` (O(log n) via a cached
-`_block_starts` + bisect), `locate` (→ `{page, bbox, block_no}`), `page_text`,
-`summary`.
+`_block_starts` + bisect), `locate` (→ `{page, bbox, block_no}`), `summary`.
 
 *Invariant:* block char ranges are contiguous and non-overlapping; the
 inter-block `\n` separators belong to no block.
@@ -445,9 +444,6 @@ slice end is the anchor's *raw end*.
 Starts and ends resolve **independently**: a missing or unmatched anchor yields a
 partial segment for that side only. Resolved segments are sorted and
 overlap-clipped (`_clip_overlapping_segments`); any clip sets `segments_partial`.
-
-> `_resolve_anchors` (single-unit, no ordering context) is retained as a
-> primitive; the production path uses `_resolve_chunk_anchors`.
 
 ### Why offsets are the source of truth
 
@@ -710,7 +706,7 @@ mirrors it for validation but is not authoritative.
 | Extraction profiles | detection prompts | `anchor_extract/prompts/profiles/` |
 | Normalization + folding | `_normalize_ws_with_map`, `_fold_confusables`, `_CONFUSABLE_CHARS` | `anchor_extract/anchor_extraction.py` |
 | Anchor primitives | `_find_anchor_raw`, `_find_anchor_unique_prefix`, `_find_anchor_unique_suffix` | `anchor_extract/anchor_extraction.py` |
-| Segment resolution | `_normalize_model_segments`, `_SegmentResolution`, `_resolve_chunk_anchors`, `_build_chunk_requirement_from_segments`, `_clip_overlapping_segments`, `_resolve_anchors` | `anchor_extract/anchor_extraction.py` |
+| Segment resolution | `_normalize_model_segments`, `_SegmentResolution`, `_resolve_chunk_anchors`, `_build_chunk_requirement_from_segments`, `_clip_overlapping_segments` | `anchor_extract/anchor_extraction.py` |
 | Chunk extraction | `extract_requirements_from_chunk`, `_derive_batch_status` | `anchor_extract/anchor_extraction.py` |
 | Unit-aware chunking + budget | `_estimate_tokens`, `compute_input_token_budget`, `_compute_boundary_blocks`, `_build_batch` | `anchor_extract/anchor_extraction.py` |
 | Orchestrator + stitch + finalize | `extract_requirements_for_range`, `_stitch_chunk`, `_finalize_requirement`, `_finalize_from_chunk_requirement`, `_doc_segments_from_chunk_req` | `anchor_extract/anchor_extraction.py` |

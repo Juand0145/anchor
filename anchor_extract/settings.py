@@ -18,29 +18,14 @@ PDF_PROCESSING = {
     "target_input_tokens": int(os.environ.get("ANCHOR_TARGET_INPUT_TOKENS", "12000")),
 }
 
-# anthropic | azure | auto (auto: Azure if endpoint+key+deployment set, else Anthropic)
-LLM_PROVIDER = (os.environ.get("ANCHOR_LLM_PROVIDER") or "auto").strip().lower()
-
-_azure_max_raw = os.environ.get("ANCHOR_AZURE_MAX_TOKENS")
-AZURE_OPENAI_CONFIG = {
-    "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT", "") or "",
-    "api_key": os.environ.get("AZURE_OPENAI_API_KEY", "") or "",
-    "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", "") or "",
-    "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT", "") or "",
-    "max_tokens": int(
-        _azure_max_raw if _azure_max_raw else os.environ.get("ANCHOR_MAX_TOKENS", "8000")
-    ),
-}
+# Provider selection and Azure credentials are read from the environment by
+# ``llm_client.resolve_llm_provider`` / ``get_azure_openai_client``.
 
 # Example unit-boundary regex (NIST AI RMF Playbook subcategory ids).
 EXAMPLE_AI_RMF_BOUNDARY_PATTERN = (
     r"^\s*(?:GOVERN|MAP|MEASURE|MANAGE)\s+\d+\.\d+\b"
 )
 
-# HIPAA CFR section heading at block start (after lstrip, prefix tolerance 8).
-# Matches "§ 160.103 Definitions." — requires a title word so wrapped
-# cross-references like "§ 164.501 of this subchapter" are not boundaries.
-# Capture group 1 is the section number (160.103).
 # HIPAA CFR section heading at block start (after lstrip, prefix tolerance 8).
 # Matches "§ 160.103 Definitions." — requires a title word so wrapped
 # cross-references like "§ 164.501 of this subchapter" are not boundaries.

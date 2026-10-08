@@ -56,7 +56,6 @@ python -m venv .venv
 # source .venv/bin/activate  # macOS/Linux
 pip install -e .
 # Notebook (pandas DataFrame + Jupyter): pip install -e ".[dev]"
-# or: pip install -r requirements.txt
 cp .env.example .env       # set Azure OpenAI and/or ANTHROPIC_API_KEY
 ```
 
