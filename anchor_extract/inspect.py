@@ -6,6 +6,7 @@ produced each unit. Does not interpret metadata keys.
 
 from __future__ import annotations
 
+from .anchor_extraction import _stored_model_parts
 from .trace_serialization import (
     _block_page,
     _requirement_warnings,
@@ -102,17 +103,6 @@ def _fallback_model_item(res, requirement):
     return None
 
 
-def _model_parts(requirement) -> list:
-    parts = [
-        p for p in (getattr(requirement, "model_requirement_parts", None) or [])
-        if isinstance(p, dict)
-    ]
-    raw = getattr(requirement, "model_requirement", None)
-    if isinstance(raw, dict) and raw not in parts:
-        parts.append(raw)
-    return parts
-
-
 def _llm_call(extraction, requirement, chunk_id, part, doc):
     results = getattr(extraction, "results", None) or []
     res = None
@@ -167,7 +157,7 @@ def inspect_requirement(extraction, anchor_id, doc=None) -> dict:
     chunk_ids = list(getattr(req, "source_chunk_ids", None) or [])
     if not chunk_ids and getattr(req, "source_chunk_id", -1) >= 0:
         chunk_ids = [req.source_chunk_id]
-    parts = _model_parts(req)
+    parts = _stored_model_parts(req)
     resolution = {
         "doc_offset_start": req.doc_offset_start,
         "doc_offset_end": req.doc_offset_end,

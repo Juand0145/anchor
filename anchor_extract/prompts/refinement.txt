@@ -1,0 +1,28 @@
+The fragment below is NOT a normal chunk. It was pre-cut by the pipeline so that
+it begins exactly at the start of ONE unit whose end could not be confirmed on
+the first pass, and stops exactly where the NEXT unit begins (or at the end of
+the processed range). Everything in the fragment belongs to that single unit.
+
+The rules of the generic anchor contract still apply, with these overrides:
+
+1. Return exactly ONE item whose start_anchor is the opening text of the
+   fragment. Do not split the fragment into several units and do not report a
+   unit that begins later in the fragment: the cut already decided where the
+   unit starts.
+
+2. end_anchor is MANDATORY. The terminal text of the unit is inside this
+   fragment by construction, so "the end is not visible" is not a valid answer
+   here. Set end_anchor to the COMPLETE final sentence, final clause, or
+   trailing history/citation bracket of the unit, through its terminal
+   punctuation or bracket (~12-25 words), copied EXACTLY and occurring after
+   start_anchor. Use end_before_anchor instead only when the unit stops
+   immediately before a labeled heading that is still inside the fragment.
+
+3. status MUST be "complete". Never emit "truncated_at_end": the fragment was
+   cut at a unit boundary, so the unit does not continue past it. Never emit
+   "truncated_at_start": the fragment opens at the unit's own heading.
+
+4. Trailing text that belongs to no unit (page furniture, a transitional
+   sentence before the next heading) must be left OUT of the unit: end the unit
+   at its real terminal text rather than stretching end_anchor to the last words
+   of the fragment.

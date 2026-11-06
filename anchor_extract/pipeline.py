@@ -33,12 +33,16 @@ def extract_document(
     requirement_boundary_pattern: Optional[str] = None,
     target_input_tokens: Optional[int] = None,
     verbose: bool = True,
+    refine_implicit_ends: bool = False,
 ) -> RangeExtraction:
     """Extract logical units from a PDF using an extraction-profile detection prompt.
 
     Returns a ``RangeExtraction`` whose stitched deliverable is ``.units``
     (``.requirements`` is the deprecated v0 alias). The profile string is
     ``detection_prompt``.
+
+    ``refine_implicit_ends`` opts into the second pass that re-resolves
+    inconclusive unit ends, at one extra LLM call per flagged unit.
     """
     if doc is None:
         doc = extract_pdf(
@@ -60,6 +64,7 @@ def extract_document(
         requirement_boundary_pattern=requirement_boundary_pattern,
         model=model,
         verbose=verbose,
+        refine_implicit_ends=refine_implicit_ends,
     )
 
 

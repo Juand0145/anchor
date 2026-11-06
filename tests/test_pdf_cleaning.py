@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
 from anchor_extract.pdf_extraction import (
     FOOTER_BAND_RATIO,
@@ -13,8 +12,8 @@ from anchor_extract.pdf_extraction import (
     extract_pdf,
 )
 from anchor_extract.settings import EXAMPLE_HIPAA_DROP_BLOCK_PATTERNS
+from tests.fixtures import HIPAA_PDF
 
-HIPAA_PDF = Path(__file__).resolve().parents[1] / "pdf" / "hipaa-simplification-201303.pdf"
 HEADER = "HIPAA Administrative Simplification Regulation Text"
 
 

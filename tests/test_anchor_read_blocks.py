@@ -9,8 +9,7 @@ from pathlib import Path
 import anchor
 from anchor.document import Document
 from anchor_extract.pdf_extraction import DocumentExtraction
-
-HIPAA_PDF = Path(__file__).resolve().parents[1] / "pdf" / "hipaa-simplification-201303.pdf"
+from tests.fixtures import HIPAA_PDF
 
 
 class TestReadUnsupported(unittest.TestCase):

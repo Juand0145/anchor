@@ -985,10 +985,6 @@ def extract_requirements_from_chunk(
         max_retries=max_retries,
         retry_wait_s=retry_wait_s,
         tool_name=ANCHOR_TOOL_NAME,
-        tool_description=(
-            "Emit the boundary anchors of the regulatory requirements "
-            "found in the provided chunk."
-        ),
         input_schema=ANCHOR_INPUT_SCHEMA,
     )
 
@@ -1164,8 +1160,8 @@ def _compute_boundary_blocks(
     return boundaries
 
 
-def _normalize_heading_to_requirement_id(matched: str) -> str:
-    """Map a heading match to requirement_id form: strip § and collapse ws."""
+def _normalize_heading_ident(matched: str) -> str:
+    """Map a heading match to its bare identifier: strip § and collapse ws."""
     s = (matched or "").strip()
     s = re.sub(r"^§\s*", "", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -1195,7 +1191,7 @@ def _find_section_heading_ids(text: str, pattern: str) -> list:
             m = compiled.search(prefix)
             if m is None or m.start() > _BOUNDARY_PREFIX_TOLERANCE:
                 continue
-        ident = _normalize_heading_to_requirement_id(
+        ident = _normalize_heading_ident(
             m.group(1) if m.lastindex else m.group(0)
         )
         if ident and ident not in seen:
@@ -1895,6 +1891,8 @@ def extract_requirements_for_range(
     max_iterations: int = 500,
     verbose: bool = True,
     requirement_boundary_pattern: Optional[str] = None,
+    *,
+    refine_implicit_ends: bool = False,
 ) -> RangeExtraction:
     """Block-driven, dynamically-budgeted anchor extraction with linear,
     forward-only multi-chunk stitching.
@@ -1906,6 +1904,12 @@ def extract_requirements_for_range(
     reprocessed: the budget shrinks and the same start retries, then the cursor
     force-advances. A failed fallback chain on one batch becomes an
     ``api_error`` result and the cursor force-advances (no silent abort).
+
+    ``refine_implicit_ends`` adds an opt-in second pass after the flush: units
+    whose end was inferred or whose end anchor never resolved are re-extracted
+    on a window cut between consecutive unit starts (see
+    ``anchor_extract.refinement``). It costs one extra call per flagged unit and
+    never changes the units list order, length or reading-order ids.
 
     Returns:
         RangeExtraction(results=per-chunk telemetry, units=stitched).
@@ -2088,6 +2092,19 @@ def extract_requirements_for_range(
             model_requirement_parts=_merge_model_parts(pending),
         ))
         pending = None
+
+    if refine_implicit_ends:
+        from .refinement import refine_implicit_end_units   # local: refinement imports this module
+        if verbose:
+            print("Refinement pass: re-resolving inconclusive unit ends")
+        units, refinement_results = refine_implicit_end_units(
+            doc, units, system_prompt, range_end_offset,
+            model=model,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            verbose=verbose,
+        )
+        results.extend(refinement_results)
 
     if iteration >= max_iterations:
         print(f"  ! safety cap hit at iteration {iteration} (max_iterations={max_iterations})")

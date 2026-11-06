@@ -14,8 +14,7 @@ from anchor_extract.anchor_extraction import (
 from anchor_extract.batch_planning import plan_batches, summarize_batch_plan
 from anchor_extract.pdf_extraction import extract_pdf
 from anchor_extract.settings import EXAMPLE_HIPAA_SECTION_BOUNDARY_PATTERN
-
-HIPAA_PDF = Path(__file__).resolve().parents[1] / "pdf" / "hipaa-simplification-201303.pdf"
+from tests.fixtures import HIPAA_PDF
 
 
 def _llm_configured() -> bool:

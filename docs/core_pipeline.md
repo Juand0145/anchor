@@ -570,6 +570,35 @@ The failure policy is uniform: anything that cannot be closed by a confirmed end
 is still emitted, bounded deterministically, and flagged for triage — never
 silently dropped and never looped on. `max_iterations` is a final runaway guard.
 
+### Opt-in refinement of inconclusive ends
+
+`extract_requirements_for_range(..., refine_implicit_ends=True)` (also exposed
+by `extract_document`) adds a second pass after the pending flush, implemented
+in `anchor_extract/refinement.py`. Default is `False`: the primary pass is
+untouched when the flag is off.
+
+A unit is a candidate when its start resolved and it carries
+`end_inferred_from_next_start` or `end_anchor_unresolved` — the two cases where
+the bound is deterministic but the terminal text was never anchor-confirmed.
+Its **window** runs from the unit's `doc_offset_start` to the next unit's
+`doc_offset_start`, or to the range end for the last unit. The window text is
+re-sent through `extract_requirements_from_chunk` with the same system prompt
+plus the `prompts/refinement.txt` addendum, which tells the model the fragment
+is already cut at unit boundaries and that an explicit `end_anchor` is
+mandatory.
+
+The merge is conservative. The call must return exactly one unit, it must start
+at the target's offset, its end must be anchor-resolved, and that end must fall
+inside the window; otherwise the original unit and its flags are kept. On a
+successful merge the end anchor, segments, text and end flags are replaced,
+while `sequence` / `anchor_id` / `span_key` and the list's order and length stay
+as the primary pass left them. Each refinement call is appended to
+`RangeExtraction.results` with the window as its `batch_doc_offset_*` span and
+`batch_first_block` / `batch_last_block` left at `-1`.
+
+Cost: one extra LLM call per flagged unit, with no grouping of adjacent
+windows.
+
 ---
 
 ## 7. Validation, Roles, and Provenance
@@ -710,6 +739,7 @@ mirrors it for validation but is not authoritative.
 | Chunk extraction | `extract_requirements_from_chunk`, `_derive_batch_status` | `anchor_extract/anchor_extraction.py` |
 | Unit-aware chunking + budget | `_estimate_tokens`, `compute_input_token_budget`, `_compute_boundary_blocks`, `_build_batch` | `anchor_extract/anchor_extraction.py` |
 | Orchestrator + stitch + finalize | `extract_requirements_for_range`, `_stitch_chunk`, `_finalize_requirement`, `_finalize_from_chunk_requirement`, `_doc_segments_from_chunk_req` | `anchor_extract/anchor_extraction.py` |
+| Refinement pass (opt-in) | `refinement_windows`, `merge_refined_unit`, `refine_implicit_end_units`, `build_refinement_system_prompt` | `anchor_extract/refinement.py`, `anchor_extract/prompts/refinement.txt` |
 | Telemetry | `summarize_extractions`, `FrameworkExtractionStats` | `anchor_extract/anchor_extraction.py` |
 | Pipeline wrapper + JSON helpers | `extract_document`, `to_units_json`, `to_requirements_json`, `to_extraction_run_json`, `save_json` | `anchor_extract/pipeline.py` |
 | Trace serialization | `build_extraction_run`, `build_units_doc`, `build_requirements_doc`, `_requirement_warnings`, `_serialize_segment_specs`, `_serialize_resolved_segments` | `anchor_extract/trace_serialization.py` |

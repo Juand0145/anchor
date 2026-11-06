@@ -48,7 +48,6 @@ EXAMPLE_HIPAA_DROP_BLOCK_PATTERNS = [
 _drop_margins_raw = (os.environ.get("ANCHOR_PDF_DROP_MARGINS") or "1").strip().lower()
 PDF_TEXT_CLEANING = {
     "drop_margin_blocks": _drop_margins_raw not in {"0", "false", "no"},
-    "generic_drop_block_patterns": list(GENERIC_DROP_BLOCK_PATTERNS),
     "drop_block_patterns": (
         list(GENERIC_DROP_BLOCK_PATTERNS) + list(EXAMPLE_HIPAA_DROP_BLOCK_PATTERNS)
     ),
