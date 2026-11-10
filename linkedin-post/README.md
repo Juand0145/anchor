@@ -2,7 +2,7 @@
 
 ## El problema
 
-Cuando hay que sacar información etiquetada de un documento —y esa información tiene que ser de confianza— lo habitual es poner un LLM de intermediario. El modelo lee un trozo del documento y devuelve el texto ya clasificado. La salida se parece a esto:
+Cuando hay que sacar información etiquetada de un documento —y esa información tiene que ser de confianza— lo habitual es poner un LLM de intermediario. El modelo lee un trozo del documento y devuelve el texto ya etiquetado. La salida se parece a esto:
 
 ```json
 {
@@ -10,13 +10,8 @@ Cuando hay que sacar información etiquetada de un documento —y esa informaci�
     {
       "categoria": "definicion",
       "etiqueta": "160.103",
-      "texto": "Breach means the acquisition, access, use, or disclosure of protected health information in a manner not permitted under subpart E of this part which compromises the security or privacy of the protected health information."
+      "texto": "Breach means the acquisition, access, use, or disclosure of protected health information in a manner not permitted under subpart E of this part which compromises the security or privacy of the protected health information. (1) Breach excludes: (i) Any unintentional acquisition, access, or use of protected health information by a workforce member or person acting under the authority of a covered entity or a business associate, if such acquisition, access, or use was made in good faith and within the scope of authority and does not result in further use or disclosure in a manner not permitted under subpart E of this part. (ii) Any inadvertent disclosure by a person who is authorized to access protected health information at a covered entity or business associate to another person authorized to access protected health information at the same covered entity or business associate, and the information received as a result of such disclosure is not further used or disclosed in a manner not permitted under subpart E of this part. (iii) A disclosure of protected health information where a covered entity or business associate has a good faith belief that an unauthorized person to whom the disclosure was made would not reasonably have been able to retain such information."
     },
-    {
-      "categoria": "definicion",
-      "etiqueta": "160.103",
-      "texto": "Business associate means a person who..."
-    }
   ]
 }
 ```
@@ -42,8 +37,16 @@ El sistema de anclas cambia el contrato. El LLM no busca el texto para reescribi
 {
   "requirements": [
     {
-      "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
-      "end_anchor": "the security or privacy of the protected health information.",
+      "segments": [
+        {
+          "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
+          "end_anchor": "to whom the disclosure was made would not reasonably have been able to retain such information.",
+          "metadata": {
+            "categoria": "definicion",
+            "etiqueta": "160.103"
+          }
+        }
+      ],
       "status": "complete"
     }
   ]
@@ -51,6 +54,8 @@ El sistema de anclas cambia el contrato. El LLM no busca el texto para reescribi
 ```
 
 `start_anchor` y `end_anchor` son substrings literales del documento, cortos (unas doce a veinticinco palabras), no el párrafo. El motor localiza esas cadenas dentro del texto fuente y corta el span. El cuerpo de la unidad lo produce el código, no el modelo.
+
+La categoría y la etiqueta viajan en `metadata`, dentro del segmento. El motor no las lee ni las valida: solo las pasa al JSON de salida.
 
 Con eso cambia el presupuesto:
 
