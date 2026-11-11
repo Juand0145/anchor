@@ -39,12 +39,12 @@ El sistema de anclas cambia el contrato. El LLM no busca el texto para reescribi
     {
       "segments": [
         {
-          "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
-          "end_anchor": "to whom the disclosure was made would not reasonably have been able to retain such information.",
           "metadata": {
             "categoria": "definicion",
             "etiqueta": "160.103"
-          }
+          },
+          "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
+          "end_anchor": "to whom the disclosure was made would not reasonably have been able to retain such information."
         }
       ],
       "status": "complete"
@@ -52,6 +52,8 @@ El sistema de anclas cambia el contrato. El LLM no busca el texto para reescribi
   ]
 }
 ```
+
+Es la misma unidad que arriba: primero la categoría y la etiqueta, y en lugar del `texto` completo, dos anclas. `segments` es una lista porque una unidad puede tener varios tramos separados. Aquí tiene uno solo.
 
 `start_anchor` y `end_anchor` son substrings literales del documento, cortos (unas doce a veinticinco palabras), no el párrafo. El motor localiza esas cadenas dentro del texto fuente y corta el span. El cuerpo de la unidad lo produce el código, no el modelo.
 
@@ -65,5 +67,39 @@ Con eso cambia el presupuesto:
 - **Modelos más ligeros.** La tarea es señalar fronteras verbatim, no redactar ni sostener un párrafo largo sin alterarlo.
 - **El cuerpo no se alucina.** El modelo no escribe el contenido. Si el ancla no está en el documento, o no es única, el motor no inventa el párrafo: deja el segmento sin resolver y lo marca. El texto que sí sale es un corte del fuente, buscado con las anclas.
 
+## Comparación de las dos salidas
 
+Misma unidad, dos contratos. En la extracción normal el modelo escribe el cuerpo completo. Con anclas escribe solo dos fronteras. El `texto` crece con la unidad. Las anclas no.
 
+## Precio
+
+El costo por llamada es `tokens_entrada × precio_entrada + tokens_salida × precio_salida`. Con anclas baja sobre todo la salida, y la entrada no paga solape.
+
+El modelo por defecto del repo es `claude-haiku-4-5-20251001` (`anchor_extract/settings.py`). Su tarifa, según la [página de precios de Anthropic](https://docs.claude.com/en/docs/about-claude/pricing) consultada el 10 de noviembre de 2026, es **$1 por millón de tokens de entrada y $5 por millón de salida**. La salida cuesta cinco veces más que la entrada, y ahí es donde cambia el contrato.
+
+Para el ejemplo de arriba, con la heurística del repo (`len//4 + 1`, no un tokenizador real):
+
+| | JSON normal | JSON con anclas |
+|---|---|---|
+| Caracteres | 1395 | 466 |
+| Tokens estimados de salida | ~349 | ~117 |
+| Solo el cuerpo (`texto` vs. las dos anclas) | ~321 | ~46 |
+
+La salida con anclas es unas tres veces más pequeña para esta unidad. Con una unidad diez veces más larga, el `texto` pasaría a unos 3200 tokens y las anclas seguirían en unos 46.
+
+Con Haiku 4.5, para 1,000 unidades del tamaño del ejemplo (supuesto: todas miden lo mismo):
+
+| | Extracción normal | Con anclas |
+|---|---|---|
+| Tokens de salida | ~349,000 | ~117,000 |
+| Costo de salida ($5 / MTok) | ~$1.75 | ~$0.59 |
+
+La diferencia es de unos $1.16 por cada 1,000 unidades, solo en salida. Es un ahorro de dos tercios, no de un orden de magnitud, y es pequeño en términos absolutos para un documento corto. Pesa cuando se procesan muchos documentos o unidades largas.
+
+Contra eso, el contrato fijo: `anchor.txt` más el perfil HIPAA suman unos 4,000 tokens por llamada con la misma heurística (sin contar el schema de la herramienta). A $1 / MTok son unos $0.004 por llamada sin caché. Si una llamada cubre varias unidades, ese costo se reparte. Con la entrada en caché, la tarifa de lectura de Haiku 4.5 es $0.10 / MTok. No medí cuántas unidades caben en cada llamada, así que no calculé el total. Este cálculo tampoco cuenta el prompt de la extracción normal, que también existe.
+
+Haiku 5.5 aparece en la misma página con $0.10 / MTok de entrada y $0.50 / MTok de salida para prompts de hasta 100,000 tokens. La proporción entre los dos métodos no cambia, pero el costo absoluto baja.
+
+No es gratis: cada llamada lleva el contrato fijo (con `cache_control`), hay reintentos, las unidades marcadas se revisan a mano, y la pasada opcional `refine_implicit_ends` suma una llamada por unidad marcada.
+
+Para medirlo con tu documento, corre `scripts/sweep_chunk_budget.py` (`--live` para llamadas reales) y compara `n_calls` y los tokens contra la extracción normal sobre el mismo rango.
