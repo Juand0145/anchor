@@ -1,18 +1,14 @@
-# Anclas, no párrafos: extraccion de textos apalancados en LLMs de la fuente y no del modelo.
+# Anclas, no párrafos: extraccion de textos apalancados en LLMs de la fuente y no en los modelos.
 
 ## El problema
 
-Cuando hay que sacar información etiquetada de un documento —y esa información tiene que ser de confianza— lo habitual es poner un LLM de intermediario. El modelo lee un trozo del documento y devuelve el texto ya etiquetado. La salida se parece a esto:
+Cuando hay que sacar información etiquetada de un documento —y esa información tiene que ser de confianza— lo habitual es poner un LLM de intermediario. El modelo lee un trozo del documento y devuelve el texto que algunas veces termina siendo etiquetado en algunos caso las salida de un modelo se verìa a algo similar ha esto.
 
 ```json
 {
-  "items": [
-    {
-      "categoria": "definicion",
-      "etiqueta": "160.103",
-      "texto": "Breach means the acquisition, access, use, or disclosure of protected health information in a manner not permitted under subpart E of this part which compromises the security or privacy of the protected health information. (1) Breach excludes: (i) Any unintentional acquisition, access, or use of protected health information by a workforce member or person acting under the authority of a covered entity or a business associate, if such acquisition, access, or use was made in good faith and within the scope of authority and does not result in further use or disclosure in a manner not permitted under subpart E of this part. (ii) Any inadvertent disclosure by a person who is authorized to access protected health information at a covered entity or business associate to another person authorized to access protected health information at the same covered entity or business associate, and the information received as a result of such disclosure is not further used or disclosed in a manner not permitted under subpart E of this part. (iii) A disclosure of protected health information where a covered entity or business associate has a good faith belief that an unauthorized person to whom the disclosure was made would not reasonably have been able to retain such information."
-    },
-  ]
+  "categoria": "definicion",
+  "etiqueta": "160.103",
+  "texto": "Breach means the acquisition, access, use, or disclosure of protected health information in a manner not permitted under subpart E of this part which compromises the security or privacy of the protected health information. (1) Breach excludes: (i) Any unintentional acquisition, access, or use of protected health information by a workforce member or person acting under the authority of a covered entity or a business associate, if such acquisition, access, or use was made in good faith and within the scope of authority and does not result in further use or disclosure in a manner not permitted under subpart E of this part. (ii) Any inadvertent disclosure by a person who is authorized to access protected health information at a covered entity or business associate to another person authorized to access protected health information at the same covered entity or business associate, and the information received as a result of such disclosure is not further used or disclosed in a manner not permitted under subpart E of this part. (iii) A disclosure of protected health information where a covered entity or business associate has a good faith belief that an unauthorized person to whom the disclosure was made would not reasonably have been able to retain such information."
 }
 ```
 
@@ -35,29 +31,18 @@ El sistema de anclas cambia el contrato. El LLM no busca el texto para reescribi
 
 ```json
 {
-  "requirements": [
-    {
-      "segments": [
-        {
-          "metadata": {
-            "categoria": "definicion",
-            "etiqueta": "160.103"
-          },
-          "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
-          "end_anchor": "to whom the disclosure was made would not reasonably have been able to retain such information."
-        }
-      ],
-      "status": "complete"
-    }
-  ]
+  "categoria": "definicion",
+  "etiqueta": "160.103",
+  "start_anchor": "Breach means the acquisition, access, use, or disclosure of protected health information",
+  "end_anchor": "to whom the disclosure was made would not reasonably have been able to retain such information."
 }
 ```
 
-Es la misma unidad que arriba: primero la categoría y la etiqueta, y en lugar del `texto` completo, dos anclas. `segments` es una lista porque una unidad puede tener varios tramos separados. Aquí tiene uno solo.
+Es la misma unidad que arriba: la categoría y la etiqueta se quedan, y en lugar del `texto` completo hay dos anclas.
 
 `start_anchor` y `end_anchor` son substrings literales del documento, cortos (unas doce a veinticinco palabras), no el párrafo. El motor localiza esas cadenas dentro del texto fuente y corta el span. El cuerpo de la unidad lo produce el código, no el modelo.
 
-La categoría y la etiqueta viajan en `metadata`, dentro del segmento. El motor no las lee ni las valida: solo las pasa al JSON de salida.
+La categoría y la etiqueta se quedan en la salida. El motor no las lee ni las valida: solo las pasa al JSON.
 
 Con eso cambia el presupuesto:
 
@@ -81,20 +66,20 @@ Para el ejemplo de arriba, con la heurística del repo (`len//4 + 1`, no un toke
 
 | | JSON normal | JSON con anclas |
 |---|---|---|
-| Caracteres | 1395 | 466 |
-| Tokens estimados de salida | ~349 | ~117 |
+| Caracteres | 1352 | 281 |
+| Tokens estimados de salida | ~339 | ~71 |
 | Solo el cuerpo (`texto` vs. las dos anclas) | ~321 | ~46 |
 
-La salida con anclas es unas tres veces más pequeña para esta unidad. Con una unidad diez veces más larga, el `texto` pasaría a unos 3200 tokens y las anclas seguirían en unos 46.
+La salida con anclas es unas cinco veces más pequeña para esta unidad. Con una unidad diez veces más larga, el `texto` pasaría a unos 3200 tokens y las anclas seguirían en unos 46.
 
 Con Haiku 4.5, para 1,000 unidades del tamaño del ejemplo (supuesto: todas miden lo mismo):
 
 | | Extracción normal | Con anclas |
 |---|---|---|
-| Tokens de salida | ~349,000 | ~117,000 |
-| Costo de salida ($5 / MTok) | ~$1.75 | ~$0.59 |
+| Tokens de salida | ~339,000 | ~71,000 |
+| Costo de salida ($5 / MTok) | ~$1.70 | ~$0.36 |
 
-La diferencia es de unos $1.16 por cada 1,000 unidades, solo en salida. Es un ahorro de dos tercios, no de un orden de magnitud, y es pequeño en términos absolutos para un documento corto. Pesa cuando se procesan muchos documentos o unidades largas.
+La diferencia es de unos $1.34 por cada 1,000 unidades, solo en salida. Es un ahorro de cerca del ochenta por ciento, no de un orden de magnitud, y es pequeño en términos absolutos para un documento corto. Pesa cuando se procesan muchos documentos o unidades largas.
 
 Contra eso, el contrato fijo: `anchor.txt` más el perfil HIPAA suman unos 4,000 tokens por llamada con la misma heurística (sin contar el schema de la herramienta). A $1 / MTok son unos $0.004 por llamada sin caché. Si una llamada cubre varias unidades, ese costo se reparte. Con la entrada en caché, la tarifa de lectura de Haiku 4.5 es $0.10 / MTok. No medí cuántas unidades caben en cada llamada, así que no calculé el total. Este cálculo tampoco cuenta el prompt de la extracción normal, que también existe.
 
